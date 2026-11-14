@@ -236,7 +236,7 @@ async function run(opts, { onAttempt } = {}) {
   if (!hasAI()) throw new AIError('Configura almeno un servizio AI in Impostazioni (es. Google Gemini, gratuito).', 'nokey');
   const vision = hasImages(opts.content);
   const list = activeProviders({ vision });
-  if (!list.length) throw new AIError('Nessuno dei servizi configurati legge le foto: attiva Google Gemini, Groq o Mistral.', 'novision');
+  if (!list.length) throw new AIError('Nessuno dei servizi configurati legge le foto: attiva Google Gemini, Groq o OpenRouter.', 'novision');
   const cfg = aiConfig();
   const errors = [];
   for (const id of list) {

@@ -78,9 +78,9 @@ Il backup esporta tutto (foto comprese) in un file JSON reimportabile.
 | Servizio | Uso | Costo | Chiave |
 |---|---|---|---|
 | Google Gemini | AI (consigliato) | gratuito con limiti | sì, gratuita |
-| Groq, Mistral, OpenRouter, Cerebras, Hugging Face | AI di riserva | gratuito con limiti | sì, gratuita |
+| Groq, OpenRouter, Hugging Face | AI di riserva | gratuito con limiti | sì, gratuita |
 | Pollinations, Ollama | AI senza chiave / locale | gratuito | no |
-| OpenAI, Claude, DeepSeek | AI | a consumo | sì |
+| Mistral, Cerebras, OpenAI, Claude, DeepSeek | AI | a consumo | sì |
 | Open-Meteo Forecast | meteo, ET0, previsioni 7 gg | gratuito (uso non commerciale) | no |
 | Open-Meteo Archive (ERA5) | clima locale su 10 anni | gratuito | no |
 | Open-Meteo Geocoding | comune → coordinate | gratuito | no |

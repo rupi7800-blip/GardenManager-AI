@@ -42,7 +42,7 @@ export async function render(view) {
     <div id="storage" class="hint" style="margin-top:8px"></div>
   </div>
   <div class="card"><h2>ℹ️ Informazioni</h2>
-    <p><small>Meteo e clima: Open-Meteo (ERA5). Nomenclatura: GBIF Backbone Taxonomy. Immagini: iNaturalist e Wikimedia Commons, solo con licenza Creative Commons, con autore e link alla fonte. AI: il servizio scelto sopra (Gemini, Groq, Mistral, OpenRouter, Claude…).</small></p>
+    <p><small>Meteo e clima: Open-Meteo (ERA5). Nomenclatura: GBIF Backbone Taxonomy. Immagini: iNaturalist e Wikimedia Commons, solo con licenza Creative Commons, con autore e link alla fonte. AI: il servizio scelto sopra (Gemini, Groq, OpenRouter, Mistral, Claude…).</small></p>
     <p><small>Le diagnosi e le identificazioni AI sono ipotesi da verificare; per organismi da quarantena rivolgiti al Servizio fitosanitario regionale. Usa i prodotti fitosanitari solo secondo etichetta.</small></p>
   </div>
   </div>`;

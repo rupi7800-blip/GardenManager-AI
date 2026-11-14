@@ -18,10 +18,10 @@ export const PROVIDERS = {
   },
   mistral: {
     models: ['mistral-small-latest', 'mistral-medium-latest', 'mistral-large-latest', 'pixtral-12b-latest', 'open-mistral-nemo'],
-    label: 'Mistral AI', kind: 'openai', free: 'gratuito', base: 'https://api.mistral.ai/v1',
+    label: 'Mistral AI', kind: 'openai', free: 'a pagamento', base: 'https://api.mistral.ai/v1',
     model: 'mistral-small-latest', visionModel: 'mistral-small-latest', vision: true, needsKey: true,
     keyUrl: 'https://console.mistral.ai/api-keys',
-    note: 'Piano gratuito (richiede verifica del telefono). Nel piano gratuito i dati possono essere usati per l\'addestramento. Azienda europea.',
+    note: 'API a pagamento a consumo (nessun piano gratuito disponibile per i nuovi account). Azienda europea, buona qualità in italiano. I modelli Mistral gratuiti sono a volte disponibili tramite OpenRouter.',
   },
   openrouter: {
     models: ['meta-llama/llama-3.3-70b-instruct:free', 'google/gemma-3-27b-it:free', 'deepseek/deepseek-chat-v3.1:free', 'qwen/qwen-2.5-72b-instruct:free', 'mistralai/mistral-small-3.2-24b-instruct:free'],
@@ -32,10 +32,10 @@ export const PROVIDERS = {
   },
   cerebras: {
     models: ['llama-3.3-70b', 'llama3.1-8b', 'qwen-3-32b', 'gpt-oss-120b'],
-    label: 'Cerebras', kind: 'openai', free: 'gratuito', base: 'https://api.cerebras.ai/v1',
+    label: 'Cerebras', kind: 'openai', free: 'a pagamento', base: 'https://api.cerebras.ai/v1',
     model: 'llama-3.3-70b', visionModel: '', vision: false, needsKey: true,
     keyUrl: 'https://cloud.cerebras.ai/',
-    note: 'Piano gratuito con quota giornaliera di token; solo testo (niente foto).',
+    note: 'API a pagamento (credito di prova solo dopo aver inserito un metodo di pagamento); solo testo, niente foto.',
   },
   huggingface: {
     models: ['meta-llama/Llama-3.3-70B-Instruct', 'Qwen/Qwen2.5-72B-Instruct', 'Qwen/Qwen2.5-VL-7B-Instruct'],
@@ -90,10 +90,13 @@ export const PROVIDERS = {
 
 // Servizi valutati e non inclusi, con il motivo (mostrati in Impostazioni)
 export const NOT_INCLUDED = [
+  ['Mistral e Cerebras come servizi gratuiti', 'nessun piano gratuito disponibile: restano selezionabili come servizi a pagamento.'],
   ['Perplexity', 'l\'API Sonar non ha un piano gratuito (solo crediti per abbonati Pro).'],
   ['Notion AI', 'non offre un\'API pubblica per generare testo.'],
   ['ChatGPT, Copilot, Gemini app', 'le app gratuite non sono utilizzabili da altre applicazioni: serve l\'API.'],
   ['GitHub Models', 'servizio gratuito segnalato come dismesso nel 2026.'],
 ];
 
-export const PROVIDER_ORDER = Object.keys(PROVIDERS);
+// prima i servizi gratuiti, poi quelli a pagamento
+const paid = (id) => /pagamento|economico/.test(PROVIDERS[id].free);
+export const PROVIDER_ORDER = [...Object.keys(PROVIDERS).filter(id => !paid(id) && id !== 'custom'), ...Object.keys(PROVIDERS).filter(id => paid(id)), 'custom'];

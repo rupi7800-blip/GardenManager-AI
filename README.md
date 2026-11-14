@@ -18,8 +18,8 @@ HTTPS serve per il service worker, le notifiche, la fotocamera e la geolocalizza
 
 1. Al primo accesso crei il giardino (località, terreno, esposizione…). Il clima locale viene calcolato da 10 anni di dati ERA5.
 2. In **Impostazioni → Intelligenza artificiale** attiva uno o più servizi. Gratuiti: **Google Gemini** (consigliato:
-   legge le foto e cita fonti web), Groq, Mistral, OpenRouter (modelli `:free`), Cerebras, Hugging Face, Pollinations
-   (senza chiave), Ollama (in locale). A pagamento: OpenAI, Claude, DeepSeek. Se un servizio gratuito esaurisce la quota,
+   legge le foto e cita fonti web), Groq, OpenRouter (modelli `:free`), Hugging Face, Pollinations (senza chiave),
+   Ollama (in locale). A pagamento: Mistral, Cerebras, OpenAI, Claude, DeepSeek. Se un servizio gratuito esaurisce la quota,
    l'app passa automaticamente a quello successivo. Le chiavi restano nel dispositivo e non entrano nei backup.
 3. Scegli la filosofia di gestione (biologica, integrata, classica, permacultura, personalizzata) e le notifiche.
 
