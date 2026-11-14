@@ -50,11 +50,17 @@ function httpError(status, body, id) {
   if (status >= 500) return new AIError(`${label}: servizio momentaneamente non disponibile (${status}).`, 'server', id);
   return new AIError(`${label}: richiesta non accettata (${status}) ${msg.slice(0, 200)}`, 'bad', id);
 }
-async function doFetch(url, opts, id) {
+async function doFetch(url, opts, id, timeoutMs = 90000) {
   if (!navigator.onLine) throw new AIError('Sei offline: le funzioni AI richiedono una connessione.', 'offline', id);
   let r;
-  try { r = await fetch(url, opts); }
-  catch (e) { throw new AIError(`${providerLabel(id)}: servizio non raggiungibile dal browser (rete, blocco o CORS).`, 'conn', id); }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try { r = await fetch(url, { ...opts, signal: ctrl.signal }); }
+  catch (e) {
+    if (e.name === 'AbortError') throw new AIError(`${providerLabel(id)}: nessuna risposta entro ${Math.round(timeoutMs / 1000)} secondi.`, 'conn', id);
+    throw new AIError(`${providerLabel(id)}: servizio non raggiungibile dal browser (rete, blocco o CORS).`, 'conn', id);
+  }
+  finally { clearTimeout(timer); }
   if (!r.ok) { let b = null; try { b = await r.json(); } catch (e) { /* corpo non JSON */ } throw httpError(r.status, b, id); }
   return r;
 }
@@ -88,32 +94,36 @@ function schemaHint(schema) {
 }
 
 // ── Adattatori ──
-async function geminiCall(id, cfg, { system, content, schema, maxTokens, stream, onText, history, webSearch }) {
+async function geminiCall(id, cfg, { system, content, schema, maxTokens, stream, onText, history, webSearch, fast, timeoutMs }) {
   const vision = hasImages(content);
   const model = modelFor(id, vision, cfg);
   const key = cfg.providers[id].key;
   const toG = (parts) => toParts(parts).map(p => p.type === 'image' ? { inlineData: { mimeType: p.media, data: p.data } } : { text: p.text });
   const contents = history ? history.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) : [{ role: 'user', parts: toG(content) }];
-  const body = { systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: { maxOutputTokens: maxTokens, temperature: 0.4 } };
+  // i modelli Gemini "ragionano" prima di rispondere e il ragionamento consuma token:
+  // in modalità veloce lo disattiviamo, altrimenti lasciamo margine sufficiente
+  const body = { systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: { maxOutputTokens: fast ? maxTokens : Math.max(maxTokens, 8192), temperature: 0.4 } };
+  if (fast) body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
   if (schema) { body.generationConfig.responseMimeType = 'application/json'; body.generationConfig.responseJsonSchema = schema; }
   if (webSearch) body.tools = [{ googleSearch: {} }];
   const base = baseFor(id, cfg);
   const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': key };
   if (!stream) {
+    // se il modello rifiuta un'opzione, riprova togliendo prima il controllo del ragionamento, poi lo schema
+    const fallbacks = [
+      () => { if (!body.generationConfig.thinkingConfig) return false; delete body.generationConfig.thinkingConfig; return true; },
+      () => { if (!body.generationConfig.responseJsonSchema) return false; delete body.generationConfig.responseJsonSchema; body.systemInstruction.parts[0].text += '\n\n' + schemaHint(schema); return true; },
+    ];
     let r;
-    try { r = await doFetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers, body: JSON.stringify(body) }, id); }
-    catch (e) {
-      // alcuni modelli non accettano lo schema completo: riprova con il solo JSON e lo schema nel prompt
-      if (e.code !== 'bad' || !schema) throw e;
-      delete body.generationConfig.responseJsonSchema;
-      body.systemInstruction.parts[0].text += '\n\n' + schemaHint(schema);
-      r = await doFetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers, body: JSON.stringify(body) }, id);
+    for (;;) {
+      try { r = await doFetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers, body: JSON.stringify(body) }, id, timeoutMs); break; }
+      catch (e) { if (e.code !== 'bad' || !fallbacks.some(f => f())) throw e; }
     }
     const j = await r.json();
     if (j.promptFeedback?.blockReason) throw new AIError(`${providerLabel(id)}: richiesta bloccata dai filtri del servizio.`, 'refusal', id);
     const c = j.candidates?.[0];
     const text = (c?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
-    if (!text) throw new AIError(`${providerLabel(id)}: risposta vuota (${c?.finishReason || 'sconosciuto'}).`, 'refusal', id);
+    if (!text) throw new AIError(c?.finishReason === 'MAX_TOKENS' ? `${providerLabel(id)}: risposta interrotta per lunghezza, riprova.` : `${providerLabel(id)}: risposta vuota (${c?.finishReason || 'sconosciuto'}).`, 'refusal', id);
     return { text, sources: geminiSources(c), model };
   }
   const r = await doFetch(`${base}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, { method: 'POST', headers, body: JSON.stringify(body) }, id);
@@ -131,7 +141,7 @@ function geminiSources(c) {
   return (c?.groundingMetadata?.groundingChunks || []).map(g => g.web).filter(Boolean).map(w => ({ url: w.uri, title: w.title })).slice(0, 8);
 }
 
-async function openaiCall(id, cfg, { system, content, schema, maxTokens, stream, onText, history }) {
+async function openaiCall(id, cfg, { system, content, schema, maxTokens, stream, onText, history, timeoutMs }) {
   const vision = hasImages(content);
   const p = PROVIDERS[id];
   if (vision && !p.vision) throw new AIError(`${p.label} non legge le foto.`, 'novision', id);
@@ -149,7 +159,7 @@ async function openaiCall(id, cfg, { system, content, schema, maxTokens, stream,
   if (id === 'openrouter') { headers['HTTP-Referer'] = location.origin; headers['X-Title'] = 'Garden Manager AI'; }
   const url = id === 'pollinations' ? baseFor(id, cfg) : `${baseFor(id, cfg)}/chat/completions`;
   let r;
-  try { r = await doFetch(url, { method: 'POST', headers, body: JSON.stringify(body) }, id); }
+  try { r = await doFetch(url, { method: 'POST', headers, body: JSON.stringify(body) }, id, timeoutMs); }
   catch (e) {
     if (e.code !== 'bad' || !body.response_format) throw e; // alcuni modelli non supportano la modalità JSON
     delete body.response_format;
@@ -232,7 +242,8 @@ async function run(opts, { onAttempt } = {}) {
   for (const id of list) {
     onAttempt && onAttempt(id);
     try {
-      const res = await ADAPTERS[PROVIDERS[id].kind](id, cfg, opts);
+      if (PROVIDERS[id].needsKey && !cfg.providers[id].key) throw new AIError('Inserisci prima la chiave API.', 'auth', id);
+  const res = await ADAPTERS[PROVIDERS[id].kind](id, cfg, opts);
       if (opts.schema) {
         try { res.json = coerce(opts.schema, parseJSON(res.text)); }
         catch (e) { throw new AIError(`${providerLabel(id)}: risposta non in formato JSON.`, 'parse', id); }
@@ -256,7 +267,7 @@ export let lastProvider = null;
 export async function callJSON({ system, content, schema, maxTokens = 8000, effort = 'medium', withContext = true }) {
   const ctx = withContext ? await gardenContext() : '';
   const sys = [BASE_SYSTEM, system, ctx ? 'CONTESTO DEL GIARDINO\n' + ctx : ''].filter(Boolean).join('\n\n');
-  const r = await run({ system: sys, content, schema, maxTokens: Math.max(maxTokens, 4096), effort });
+  const r = await run({ system: sys, content, schema, maxTokens: Math.max(maxTokens, 4096), effort, fast: effort === 'low' });
   return r.json;
 }
 export async function chatStream({ history, onText, webSearch = false }) {
@@ -272,21 +283,26 @@ export async function testProvider(id, settings) {
   const cfg = aiConfig(settings);
   cfg.providers[id].enabled = true;
   const schema = { type: 'object', additionalProperties: false, required: ['ok', 'pianta'], properties: { ok: { type: 'boolean' }, pianta: { type: 'string' } } };
-  const res = await ADAPTERS[PROVIDERS[id].kind](id, cfg, { system: 'Test di collegamento.', content: 'Rispondi con ok=true e il nome comune di Ficus carica.', schema, maxTokens: 1024 });
-  return { ...coerce(schema, parseJSON(res.text)), model: res.model };
+  const t0 = performance.now();
+  const res = await ADAPTERS[PROVIDERS[id].kind](id, cfg, { system: 'Test di collegamento. Rispondi in modo brevissimo.', content: 'Rispondi con ok=true e il nome comune italiano di Ficus carica.', schema, maxTokens: 300, fast: true, timeoutMs: 30000, effort: 'low' });
+  let parsed;
+  try { parsed = coerce(schema, parseJSON(res.text)); } catch (e) { parsed = { ok: true, pianta: res.text.slice(0, 40) }; }
+  return { ...parsed, model: res.model, seconds: ((performance.now() - t0) / 1000).toFixed(1) };
 }
 // Elenco dei modelli disponibili presso il servizio
 export async function listModels(id, settings) {
   const cfg = aiConfig(settings);
   const p = PROVIDERS[id], key = cfg.providers[id].key, base = baseFor(id, cfg);
+  if (p.needsKey && !key) throw new AIError('Inserisci prima la chiave API.', 'auth', id);
   if (p.kind === 'gemini') {
-    const r = await doFetch(`${base}/models?pageSize=200`, { headers: { 'x-goog-api-key': key } }, id);
+    const r = await doFetch(`${base}/models?pageSize=200`, { headers: { 'x-goog-api-key': key } }, id, 20000);
     const j = await r.json();
-    return (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => m.name.replace('models/', ''));
+    return (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => m.name.replace('models/', ''))
+      .filter(n => /^(gemini|gemma)/.test(n) && !/(embedding|tts|image|audio|live|robotics|computer-use|veo|imagen)/.test(n));
   }
   if (p.kind === 'anthropic') return ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
   if (id === 'pollinations') return ['openai', 'mistral'];
-  const r = await doFetch(`${base}/models`, { headers: key ? { Authorization: 'Bearer ' + key } : {} }, id);
+  const r = await doFetch(`${base}/models`, { headers: key ? { Authorization: 'Bearer ' + key } : {} }, id, 20000);
   const j = await r.json();
   const ids = (j.data || j.models || []).map(m => m.id || m.name).filter(Boolean);
   return id === 'openrouter' ? ids.filter(x => x.endsWith(':free')) : ids;

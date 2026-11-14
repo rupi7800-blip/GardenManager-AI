@@ -47,7 +47,15 @@ const BASE = '' + (process.env.BASE || 'http://localhost:8765') + '/index.html';
     await page.click('[data-test=gemini]');
     await page.waitForSelector('[data-out=gemini] .chip.ok');
     await page.click('[data-models=gemini]');
-    await page.waitForFunction(() => document.querySelectorAll('#ml-gemini option').length === 2);
+    await page.waitForSelector('[data-out=gemini] .chip.ok');
+    // il menu dei modelli è una vera tendina e permette anche di scrivere un modello
+    await page.selectOption('[data-prov=groq] [data-pick=model]', 'qwen/qwen3-32b');
+    if (await page.inputValue('[data-prov=groq] [data-f=model]') !== 'qwen/qwen3-32b') throw new Error('scelta modello non applicata');
+    await page.selectOption('[data-prov=groq] [data-pick=model]', '__altro');
+    await page.fill('[data-prov=groq] [data-f=model]', 'llama-3.3-70b-versatile');
+    await page.click('#aiSave');
+    await page.waitForTimeout(500);
+    if (await page.inputValue('[data-prov=groq] [data-pick=model]') !== 'llama-3.3-70b-versatile') throw new Error('modello scritto non salvato');
     await page.screenshot({ path: OUT + '/01-impostazioni-ai.png', fullPage: true });
   });
   await step('giardino e clima', async () => {

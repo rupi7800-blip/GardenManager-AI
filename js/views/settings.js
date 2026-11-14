@@ -1,5 +1,5 @@
 import { state, saveSettings, MODES, CUSTOM_TECHNIQUES } from '../store.js';
-import { exportAll, importAll } from '../db.js';
+import { exportAll, importAll, kvGet, kvSet } from '../db.js';
 import { esc, $, $$, options, checks, toast, confirmDialog } from '../ui.js';
 import { PROVIDERS, aiConfig, testProvider, listModels, hasAI } from '../ai.js';
 import { PROVIDER_ORDER, NOT_INCLUDED } from '../ai-providers.js';
@@ -85,8 +85,29 @@ export async function render(view) {
 }
 
 // Scelta e configurazione dei servizi AI
-function renderAI(box) {
+// Menu a tendina dei modelli: suggeriti + letti dal servizio + "altro" da scrivere
+function modelPicker(id, field, current, list) {
+  const all = [...new Set([current, ...list].filter(Boolean))];
+  return `<div class="row" style="flex-wrap:nowrap;gap:6px">
+    <select data-pick="${field}" aria-label="${field === 'model' ? 'Modello' : 'Modello per le foto'}" style="flex:1;min-width:0">${all.map(m => `<option value="${esc(m)}" ${m === current ? 'selected' : ''}>${esc(m)}</option>`).join('')}<option value="__altro">✏️ Altro modello (scrivi)…</option></select>
+    <input type="text" data-f="${field}" value="${esc(current)}" hidden style="flex:1;min-width:0" placeholder="nome del modello">
+  </div>`;
+}
+function bindPickers(root) {
+  for (const sel of $$('[data-pick]', root)) {
+    const input = sel.parentElement.querySelector('[data-f]');
+    sel.onchange = () => {
+      if (sel.value === '__altro') { input.hidden = false; input.value = ''; input.focus(); }
+      else { input.hidden = true; input.value = sel.value; }
+    };
+  }
+}
+
+async function renderAI(box) {
   const cfg = aiConfig();
+  const fetched = {};
+  for (const id of PROVIDER_ORDER) fetched[id] = await kvGet('models:' + id, []);
+  const listFor = (id) => [...PROVIDERS[id].models, ...fetched[id]];
   const chip = (f) => `<span class="chip ${/^gratuito/.test(f) ? 'ok' : /pagamento/.test(f) ? 'warn' : ''}">${esc(f)}</span>`;
   box.innerHTML = `<div class="card-head"><h2>✨ Intelligenza artificiale</h2>${hasAI() ? '<span class="chip ok">attiva</span>' : '<span class="chip warn">non configurata</span>'}</div>
     <p class="muted">Scegli uno o più servizi. Per iniziare gratis: crea una chiave su <a href="${PROVIDERS.gemini.keyUrl}" target="_blank" rel="noopener">Google AI Studio</a> (un minuto, senza carta) e incollala in Google Gemini. Le chiavi restano solo su questo dispositivo e non entrano nei backup.</p>
@@ -101,15 +122,17 @@ function renderAI(box) {
       <div class="form-grid" style="margin-top:8px">
         ${p.needsKey || id === 'custom' ? `<div class="field full"><label>Chiave API${p.needsKey ? '' : ' (se richiesta)'}</label><input type="password" autocomplete="off" data-f="key" value="${esc(c.key)}"></div>` : ''}
         ${showBase ? `<div class="field full"><label>Indirizzo del servizio</label><input type="text" data-f="base" value="${esc(c.base || p.base)}" placeholder="https://…/v1"></div>` : ''}
-        <div class="field"><label>Modello</label><input type="text" data-f="model" list="ml-${id}" value="${esc(c.model || p.model)}"></div>
-        ${p.vision && p.kind === 'openai' ? `<div class="field"><label>Modello per le foto</label><input type="text" data-f="visionModel" list="ml-${id}" value="${esc(c.visionModel || p.visionModel)}"></div>` : ''}
-        <datalist id="ml-${id}"></datalist>
+        <div class="field"><label>Modello</label>${modelPicker(id, 'model', c.model || p.model, listFor(id))}</div>
+        ${p.vision && p.kind === 'openai' ? `<div class="field"><label>Modello per le foto</label>${modelPicker(id, 'visionModel', c.visionModel || p.visionModel, listFor(id))}</div>` : ''}
       </div>
       <div class="row"><button class="small" data-test="${id}">Prova collegamento</button><button class="small ghost" data-models="${id}">Aggiorna elenco modelli</button><small data-out="${id}"></small></div>
     </details>`; }).join('')}</div>
     <div class="row" style="margin-top:12px"><button class="primary" id="aiSave">Salva servizi AI</button></div>
     <details style="margin-top:12px"><summary><small>Servizi valutati e non inclusi</small></summary><ul>${NOT_INCLUDED.map(([n, w]) => `<li><small><b>${esc(n)}</b>: ${esc(w)}</small></li>`).join('')}</ul>
       <small>I limiti dei piani gratuiti cambiano spesso: verifica le condizioni sul sito di ogni servizio.</small></details>`;
+  bindPickers(box);
+  // inserendo una chiave il servizio si attiva automaticamente
+  for (const k of $$('[data-f=key]', box)) k.addEventListener('input', () => { if (k.value.trim()) k.closest('[data-prov]').querySelector('[data-f=enabled]').checked = true; });
   const collect = () => {
     const providers = {};
     for (const d of $$('[data-prov]', box)) {
@@ -127,16 +150,44 @@ function renderAI(box) {
     toast(hasAI() ? 'Servizi AI salvati' : 'Salvato: manca ancora una chiave valida');
     renderAI(box);
   };
+  // aggiorna i menu dei modelli di un servizio con l'elenco letto dal servizio stesso
+  const refreshModels = async (id, quiet) => {
+    const out = $(`[data-out="${id}"]`, box);
+    try {
+      const list = await listModels(id, { ...state.settings, ai: collect() });
+      if (!list.length) throw new Error('nessun modello restituito');
+      await kvSet('models:' + id, list);
+      fetched[id] = list;
+      const d = $(`[data-prov="${id}"]`, box);
+      for (const sel of $$('[data-pick]', d)) {
+        const input = sel.parentElement.querySelector('[data-f]');
+        const cur = input.value;
+        sel.innerHTML = [...new Set([cur, ...listFor(id)].filter(Boolean))].map(m => `<option value="${esc(m)}" ${m === cur ? 'selected' : ''}>${esc(m)}</option>`).join('') + '<option value="__altro">✏️ Altro modello (scrivi)…</option>';
+        input.hidden = true;
+      }
+      if (!quiet) out.innerHTML = `<span class="chip ok">${list.length} modelli</span> scegli dal menu Modello`;
+    } catch (e) { if (!quiet) out.innerHTML = `<span class="chip danger">errore</span> ${esc(e.message)}`; }
+  };
   $$('[data-test]', box).forEach(b => b.onclick = async () => {
     const id = b.dataset.test, out = $(`[data-out="${id}"]`, box);
-    out.textContent = 'Prova in corso…';
-    try { const r = await testProvider(id, { ...state.settings, ai: collect() }); out.innerHTML = `<span class="chip ok">funziona</span> ${esc(r.model)} · «${esc(r.pianta)}»`; }
-    catch (e) { out.innerHTML = `<span class="chip danger">errore</span> ${esc(e.message)}`; }
+    b.disabled = true;
+    out.innerHTML = '<span class="spinner"></span> Prova in corso (max 30 s)…';
+    try {
+      const r = await testProvider(id, { ...state.settings, ai: collect() });
+      // collegamento riuscito: attiva e salva subito il servizio
+      $(`[data-prov="${id}"] [data-f=enabled]`, box).checked = true;
+      await saveSettings({ ai: collect(), apiKey: '' });
+      out.innerHTML = `<span class="chip ok">funziona</span> ${esc(r.model)} · «${esc(r.pianta)}» · ${r.seconds} s · attivato e salvato`;
+      const st = $('.card-head .chip', box); if (st) { st.className = 'chip ok'; st.textContent = 'attiva'; }
+      refreshModels(id, true);
+    } catch (e) { out.innerHTML = `<span class="chip danger">errore</span> ${esc(e.message)}`; }
+    b.disabled = false;
   });
   $$('[data-models]', box).forEach(b => b.onclick = async () => {
-    const id = b.dataset.models, out = $(`[data-out="${id}"]`, box);
-    out.textContent = 'Lettura modelli…';
-    try { const list = await listModels(id, { ...state.settings, ai: collect() }); $(`#ml-${id}`, box).innerHTML = list.map(m => `<option value="${esc(m)}">`).join(''); out.textContent = `${list.length} modelli disponibili: scegli dal campo Modello.`; }
-    catch (e) { out.innerHTML = `<span class="chip danger">errore</span> ${esc(e.message)}`; }
+    const id = b.dataset.models;
+    b.disabled = true;
+    $(`[data-out="${id}"]`, box).innerHTML = '<span class="spinner"></span> Lettura modelli…';
+    await refreshModels(id, false);
+    b.disabled = false;
   });
 }
