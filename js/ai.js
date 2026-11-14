@@ -1,41 +1,295 @@
-// Integrazione con Claude (Anthropic). L'SDK ufficiale è incluso in /vendor e caricato solo
-// al primo utilizzo. La chiave API resta nel dispositivo dell'utente.
+// Motore AI multi-servizio. Servizi selezionabili in Impostazioni (Gemini, Groq, Mistral,
+// OpenRouter, Cerebras, Hugging Face, DeepSeek, Pollinations, Ollama, OpenAI, Claude, altro).
+// Le chiavi restano nel dispositivo. Se un servizio gratuito esaurisce la quota o non risponde,
+// la richiesta passa automaticamente al servizio successivo configurato.
 import { state, gardenPlants, getSpecies, modeLabel, interventionFor } from './store.js';
 import { db } from './db.js';
 import { MONTHS } from './ui.js';
+import { PROVIDERS, PROVIDER_ORDER } from './ai-providers.js';
 
-export const MODELS = [
-  ['claude-opus-5-5', 'Claude Opus 5.5 — massima qualità (≈ 4/20 $ per M token)'],
-  ['claude-sonnet-5-5', 'Claude Sonnet 5.5 — equilibrio (≈ 2/10 $ per M token)'],
-  ['claude-haiku-5-5', 'Claude Haiku 5.5 — economico (≈ 0,10/0,50 $ per M token)'],
-];
+export { PROVIDERS };
+export class AIError extends Error { constructor(msg, code, provider) { super(msg); this.code = code; this.provider = provider; } }
 
-let SDK = null, client = null, clientKey = null;
-async function getClient() {
-  const key = state.settings?.apiKey;
-  if (!key) throw new AIError('Per usare le funzioni AI inserisci la tua chiave API Claude in Impostazioni.', 'nokey');
-  if (!navigator.onLine) throw new AIError('Sei offline: le funzioni AI richiedono una connessione.', 'offline');
-  if (!SDK) SDK = (await import('../vendor/anthropic-sdk.js')).default;
-  if (!client || clientKey !== key) {
-    // La chiamata parte dal browser con la chiave personale dell'utente (app local-first).
-    client = new SDK({ apiKey: key, dangerouslyAllowBrowser: true, maxRetries: 2, timeout: 120000 });
-    clientKey = key;
-  }
-  return client;
+// ── Configurazione ──
+export function aiConfig(settings = state.settings) {
+  const ai = settings?.ai || {};
+  const providers = {};
+  for (const id of PROVIDER_ORDER) providers[id] = { enabled: false, key: '', model: '', visionModel: '', base: '', ...(ai.providers?.[id] || {}) };
+  // compatibilità con la versione precedente (solo Claude)
+  if (settings?.apiKey && !providers.anthropic.key) { providers.anthropic.key = settings.apiKey; providers.anthropic.enabled = true; }
+  return { primary: ai.primary || 'gemini', fallback: ai.fallback !== false, providers };
 }
-export const hasAI = () => !!state.settings?.apiKey;
+const usable = (id, cfg) => { const p = PROVIDERS[id], c = cfg.providers[id]; return c.enabled && (!p.needsKey || c.key) && (id !== 'custom' || c.base); };
+export function hasAI(settings = state.settings) { const cfg = aiConfig(settings); return PROVIDER_ORDER.some(id => usable(id, cfg)); }
+export function activeProviders({ vision = false } = {}, settings = state.settings) {
+  const cfg = aiConfig(settings);
+  const order = [cfg.primary, ...PROVIDER_ORDER.filter(x => x !== cfg.primary)];
+  const list = order.filter(id => usable(id, cfg) && (!vision || PROVIDERS[id].vision));
+  return cfg.fallback ? list : list.slice(0, 1);
+}
+export function providerLabel(id) { return PROVIDERS[id]?.label || id; }
+function modelFor(id, vision, cfg) {
+  const p = PROVIDERS[id], c = cfg.providers[id];
+  if (vision) return c.visionModel || p.visionModel || c.model || p.model;
+  return c.model || p.model;
+}
+function baseFor(id, cfg) { return (cfg.providers[id].base || PROVIDERS[id].base).replace(/\/+$/, ''); }
 
-export class AIError extends Error { constructor(msg, code) { super(msg); this.code = code; } }
-function mapError(e) {
-  if (e instanceof AIError) return e;
-  const S = SDK || {};
-  if (S.AuthenticationError && e instanceof S.AuthenticationError) return new AIError('Chiave API non valida o revocata. Controllala in Impostazioni.', 'auth');
-  if (S.PermissionDeniedError && e instanceof S.PermissionDeniedError) return new AIError('La chiave non ha accesso a questo modello. Prova un altro modello in Impostazioni.', 'perm');
-  if (S.RateLimitError && e instanceof S.RateLimitError) return new AIError('Troppe richieste in poco tempo: riprova tra un minuto.', 'rate');
-  if (S.APIConnectionError && e instanceof S.APIConnectionError) return new AIError('Connessione al servizio AI non riuscita. Verifica la rete.', 'conn');
-  if (S.BadRequestError && e instanceof S.BadRequestError) return new AIError('Richiesta non accettata dal servizio AI: ' + (e.error?.error?.message || e.message), 'bad');
-  if (S.APIError && e instanceof S.APIError) return new AIError(`Errore del servizio AI (${e.status || '—'}). Riprova più tardi.`, 'api');
-  return new AIError(e.message || String(e), 'unknown');
+// Formato neutro per le immagini: convertito per ogni servizio
+export function imageBlock(b64, media = 'image/jpeg') { return { type: 'image', media, data: b64 }; }
+const toParts = (content) => typeof content === 'string' ? [{ type: 'text', text: content }] : content;
+const hasImages = (content) => Array.isArray(content) && content.some(c => c.type === 'image');
+
+// ── Errori ──
+function httpError(status, body, id) {
+  const label = providerLabel(id);
+  const msg = (body && (body.error?.message || body.message || (typeof body.error === 'string' ? body.error : ''))) || '';
+  if (status === 401 || status === 403) return new AIError(`${label}: chiave non valida o senza accesso a questo modello.`, 'auth', id);
+  if (status === 429) return new AIError(`${label}: limite gratuito raggiunto per ora. Riprova più tardi o aggiungi un altro servizio come riserva.`, 'rate', id);
+  if (status === 404) return new AIError(`${label}: modello non trovato. Aggiorna l'elenco dei modelli in Impostazioni.`, 'model', id);
+  if (status >= 500) return new AIError(`${label}: servizio momentaneamente non disponibile (${status}).`, 'server', id);
+  return new AIError(`${label}: richiesta non accettata (${status}) ${msg.slice(0, 200)}`, 'bad', id);
+}
+async function doFetch(url, opts, id) {
+  if (!navigator.onLine) throw new AIError('Sei offline: le funzioni AI richiedono una connessione.', 'offline', id);
+  let r;
+  try { r = await fetch(url, opts); }
+  catch (e) { throw new AIError(`${providerLabel(id)}: servizio non raggiungibile dal browser (rete, blocco o CORS).`, 'conn', id); }
+  if (!r.ok) { let b = null; try { b = await r.json(); } catch (e) { /* corpo non JSON */ } throw httpError(r.status, b, id); }
+  return r;
+}
+const RETRYABLE = ['rate', 'server', 'conn', 'model', 'auth', 'refusal', 'parse', 'novision'];
+
+// ── JSON robusto ──
+export function parseJSON(text) {
+  let t = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a >= 0 && b > a) t = t.slice(a, b + 1);
+  return JSON.parse(t);
+}
+// Completa i campi mancanti secondo lo schema, così l'interfaccia non si interrompe
+export function coerce(schema, v) {
+  if (!schema) return v;
+  const t = schema.type;
+  if (t === 'object') {
+    const o = v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+    const out = {};
+    for (const [k, s] of Object.entries(schema.properties || {})) out[k] = coerce(s, o[k]);
+    return out;
+  }
+  if (t === 'array') return Array.isArray(v) ? v.map(x => coerce(schema.items, x)) : [];
+  if (t === 'number' || t === 'integer') { const n = Number(v); return Number.isFinite(n) ? (t === 'integer' ? Math.round(n) : n) : 0; }
+  if (t === 'boolean') return v === true || v === 'true';
+  if (schema.enum) return schema.enum.includes(v) ? v : schema.enum[0];
+  return v == null ? '' : String(v);
+}
+function schemaHint(schema) {
+  return `Rispondi esclusivamente con un oggetto JSON valido (niente testo fuori dal JSON), conforme a questo JSON Schema; usa tutti i campi richiesti:\n${JSON.stringify(schema)}`;
+}
+
+// ── Adattatori ──
+async function geminiCall(id, cfg, { system, content, schema, maxTokens, stream, onText, history, webSearch }) {
+  const vision = hasImages(content);
+  const model = modelFor(id, vision, cfg);
+  const key = cfg.providers[id].key;
+  const toG = (parts) => toParts(parts).map(p => p.type === 'image' ? { inlineData: { mimeType: p.media, data: p.data } } : { text: p.text });
+  const contents = history ? history.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) : [{ role: 'user', parts: toG(content) }];
+  const body = { systemInstruction: { parts: [{ text: system }] }, contents, generationConfig: { maxOutputTokens: maxTokens, temperature: 0.4 } };
+  if (schema) { body.generationConfig.responseMimeType = 'application/json'; body.generationConfig.responseJsonSchema = schema; }
+  if (webSearch) body.tools = [{ googleSearch: {} }];
+  const base = baseFor(id, cfg);
+  const headers = { 'Content-Type': 'application/json', 'x-goog-api-key': key };
+  if (!stream) {
+    let r;
+    try { r = await doFetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers, body: JSON.stringify(body) }, id); }
+    catch (e) {
+      // alcuni modelli non accettano lo schema completo: riprova con il solo JSON e lo schema nel prompt
+      if (e.code !== 'bad' || !schema) throw e;
+      delete body.generationConfig.responseJsonSchema;
+      body.systemInstruction.parts[0].text += '\n\n' + schemaHint(schema);
+      r = await doFetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers, body: JSON.stringify(body) }, id);
+    }
+    const j = await r.json();
+    if (j.promptFeedback?.blockReason) throw new AIError(`${providerLabel(id)}: richiesta bloccata dai filtri del servizio.`, 'refusal', id);
+    const c = j.candidates?.[0];
+    const text = (c?.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+    if (!text) throw new AIError(`${providerLabel(id)}: risposta vuota (${c?.finishReason || 'sconosciuto'}).`, 'refusal', id);
+    return { text, sources: geminiSources(c), model };
+  }
+  const r = await doFetch(`${base}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, { method: 'POST', headers, body: JSON.stringify(body) }, id);
+  let text = '', last = null;
+  await readSSE(r, (data) => {
+    const j = JSON.parse(data); const c = j.candidates?.[0]; if (!c) return;
+    last = c;
+    const t = (c.content?.parts || []).filter(p => !p.thought).map(p => p.text || '').join('');
+    if (t) { text += t; onText && onText(t); }
+  });
+  if (!text) throw new AIError(`${providerLabel(id)}: risposta vuota.`, 'refusal', id);
+  return { text, sources: geminiSources(last), model };
+}
+function geminiSources(c) {
+  return (c?.groundingMetadata?.groundingChunks || []).map(g => g.web).filter(Boolean).map(w => ({ url: w.uri, title: w.title })).slice(0, 8);
+}
+
+async function openaiCall(id, cfg, { system, content, schema, maxTokens, stream, onText, history }) {
+  const vision = hasImages(content);
+  const p = PROVIDERS[id];
+  if (vision && !p.vision) throw new AIError(`${p.label} non legge le foto.`, 'novision', id);
+  const model = modelFor(id, vision, cfg);
+  if (!model) throw new AIError(`${p.label}: indica il modello in Impostazioni.`, 'model', id);
+  const key = cfg.providers[id].key;
+  const toO = (parts) => toParts(parts).map(x => x.type === 'image' ? { type: 'image_url', image_url: { url: `data:${x.media};base64,${x.data}` } } : { type: 'text', text: x.text });
+  const sys = schema ? `${system}\n\n${schemaHint(schema)}` : system;
+  const messages = [{ role: 'system', content: sys }, ...(history ? history.map(m => ({ role: m.role, content: m.content })) : [{ role: 'user', content: vision ? toO(content) : toParts(content).map(x => x.text).join('\n') }])];
+  const body = { model, messages, max_tokens: maxTokens, temperature: 0.4 };
+  if (schema) body.response_format = { type: 'json_object' };
+  if (stream) body.stream = true;
+  const headers = { 'Content-Type': 'application/json' };
+  if (key) headers.Authorization = 'Bearer ' + key;
+  if (id === 'openrouter') { headers['HTTP-Referer'] = location.origin; headers['X-Title'] = 'Garden Manager AI'; }
+  const url = id === 'pollinations' ? baseFor(id, cfg) : `${baseFor(id, cfg)}/chat/completions`;
+  let r;
+  try { r = await doFetch(url, { method: 'POST', headers, body: JSON.stringify(body) }, id); }
+  catch (e) {
+    if (e.code !== 'bad' || !body.response_format) throw e; // alcuni modelli non supportano la modalità JSON
+    delete body.response_format;
+    r = await doFetch(url, { method: 'POST', headers, body: JSON.stringify(body) }, id);
+  }
+  if (!stream) {
+    const j = await r.json();
+    const text = j.choices?.[0]?.message?.content || '';
+    if (!text) throw new AIError(`${p.label}: risposta vuota.`, 'refusal', id);
+    return { text: Array.isArray(text) ? text.map(t => t.text || '').join('') : text, sources: [], model };
+  }
+  let text = '';
+  await readSSE(r, (data) => {
+    if (data === '[DONE]') return;
+    const j = JSON.parse(data);
+    const t = j.choices?.[0]?.delta?.content || '';
+    if (t) { text += t; onText && onText(t); }
+  });
+  if (!text) throw new AIError(`${p.label}: risposta vuota.`, 'refusal', id);
+  return { text, sources: [], model };
+}
+
+async function readSSE(response, onData) {
+  const reader = response.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (line.startsWith('data:')) { const d = line.slice(5).trim(); if (d) { try { onData(d); } catch (e) { /* frammento non valido */ } } }
+    }
+  }
+}
+
+// Claude (a pagamento): SDK ufficiale caricato solo se scelto
+let SDK = null, claude = null, claudeKey = null;
+async function anthropicCall(id, cfg, { system, content, schema, maxTokens, stream, onText, history, webSearch, effort }) {
+  const key = cfg.providers[id].key;
+  if (!SDK) SDK = (await import('../vendor/anthropic-sdk.js')).default;
+  if (!claude || claudeKey !== key) { claude = new SDK({ apiKey: key, dangerouslyAllowBrowser: true, maxRetries: 2, timeout: 120000 }); claudeKey = key; }
+  const model = modelFor(id, false, cfg);
+  const toA = (parts) => toParts(parts).map(x => x.type === 'image' ? { type: 'image', source: { type: 'base64', media_type: x.media, data: x.data } } : x);
+  const params = { model, max_tokens: maxTokens, system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }], output_config: { effort: effort || 'medium' }, messages: history ? history.map(m => ({ role: m.role, content: m.content })) : [{ role: 'user', content: toA(content) }] };
+  if (/^claude-(opus|sonnet)/.test(model)) { params.betas = ['server-side-fallback-2026-07-01']; params.fallbacks = 'default'; }
+  if (schema) params.output_config.format = { type: 'json_schema', schema };
+  if (webSearch) params.tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }];
+  try {
+    let msg;
+    if (stream) { const s = claude.beta.messages.stream(params); s.on('text', t => onText && onText(t)); msg = await s.finalMessage(); }
+    else msg = await claude.beta.messages.create(params);
+    if (msg.stop_reason === 'refusal') throw new AIError('Claude non ha elaborato questa richiesta.', 'refusal', id);
+    const sources = [];
+    for (const b of msg.content) {
+      if (b.type === 'text' && b.citations) for (const ci of b.citations) if (ci.url && !sources.find(s => s.url === ci.url)) sources.push({ url: ci.url, title: ci.title });
+      if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) if (r.url && !sources.find(s => s.url === r.url)) sources.push({ url: r.url, title: r.title });
+    }
+    return { text: msg.content.filter(b => b.type === 'text').map(b => b.text).join(''), sources: sources.slice(0, 8), model };
+  } catch (e) {
+    if (e instanceof AIError) throw e;
+    const st = e.status;
+    if (st) throw httpError(st, e.error, id);
+    throw new AIError('Claude: ' + (e.message || e), 'conn', id);
+  }
+}
+
+const ADAPTERS = { gemini: geminiCall, openai: openaiCall, anthropic: anthropicCall };
+
+// Esegue la richiesta sul servizio principale e, se serve, su quelli di riserva
+async function run(opts, { onAttempt } = {}) {
+  if (!hasAI()) throw new AIError('Configura almeno un servizio AI in Impostazioni (es. Google Gemini, gratuito).', 'nokey');
+  const vision = hasImages(opts.content);
+  const list = activeProviders({ vision });
+  if (!list.length) throw new AIError('Nessuno dei servizi configurati legge le foto: attiva Google Gemini, Groq o Mistral.', 'novision');
+  const cfg = aiConfig();
+  const errors = [];
+  for (const id of list) {
+    onAttempt && onAttempt(id);
+    try {
+      const res = await ADAPTERS[PROVIDERS[id].kind](id, cfg, opts);
+      if (opts.schema) {
+        try { res.json = coerce(opts.schema, parseJSON(res.text)); }
+        catch (e) { throw new AIError(`${providerLabel(id)}: risposta non in formato JSON.`, 'parse', id); }
+      }
+      res.provider = id;
+      lastProvider = id;
+      return res;
+    } catch (e) {
+      const err = e instanceof AIError ? e : new AIError(e.message || String(e), 'unknown', id);
+      errors.push(err);
+      if (opts.stream && opts.started && opts.started()) break; // testo già mostrato: non ricominciare altrove
+      if (!RETRYABLE.includes(err.code)) break;
+    }
+  }
+  const e = errors[errors.length - 1];
+  if (errors.length > 1) e.message += ` (provati: ${errors.map(x => providerLabel(x.provider)).join(', ')})`;
+  throw e;
+}
+export let lastProvider = null;
+
+export async function callJSON({ system, content, schema, maxTokens = 8000, effort = 'medium', withContext = true }) {
+  const ctx = withContext ? await gardenContext() : '';
+  const sys = [BASE_SYSTEM, system, ctx ? 'CONTESTO DEL GIARDINO\n' + ctx : ''].filter(Boolean).join('\n\n');
+  const r = await run({ system: sys, content, schema, maxTokens: Math.max(maxTokens, 4096), effort });
+  return r.json;
+}
+export async function chatStream({ history, onText, webSearch = false }) {
+  const ctx = await gardenContext();
+  const system = BASE_SYSTEM + '\nRispondi in testo semplice (puoi usare elenchi con trattino e **grassetto**), senza tabelle. Separa in sezioni "Fatti", "Ipotesi" e "Consigli" quando utile. Indica le fonti quando le usi.\n\nCONTESTO DEL GIARDINO\n' + ctx;
+  let started = false;
+  const r = await run({ system, history, content: '', stream: true, maxTokens: 8000, webSearch: webSearch, onText: (t) => { started = true; onText && onText(t); }, started: () => started });
+  return { text: r.text, sources: r.sources || [], provider: r.provider };
+}
+
+// Prova di collegamento di un singolo servizio
+export async function testProvider(id, settings) {
+  const cfg = aiConfig(settings);
+  cfg.providers[id].enabled = true;
+  const schema = { type: 'object', additionalProperties: false, required: ['ok', 'pianta'], properties: { ok: { type: 'boolean' }, pianta: { type: 'string' } } };
+  const res = await ADAPTERS[PROVIDERS[id].kind](id, cfg, { system: 'Test di collegamento.', content: 'Rispondi con ok=true e il nome comune di Ficus carica.', schema, maxTokens: 1024 });
+  return { ...coerce(schema, parseJSON(res.text)), model: res.model };
+}
+// Elenco dei modelli disponibili presso il servizio
+export async function listModels(id, settings) {
+  const cfg = aiConfig(settings);
+  const p = PROVIDERS[id], key = cfg.providers[id].key, base = baseFor(id, cfg);
+  if (p.kind === 'gemini') {
+    const r = await doFetch(`${base}/models?pageSize=200`, { headers: { 'x-goog-api-key': key } }, id);
+    const j = await r.json();
+    return (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => m.name.replace('models/', ''));
+  }
+  if (p.kind === 'anthropic') return ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+  if (id === 'pollinations') return ['openai', 'mistral'];
+  const r = await doFetch(`${base}/models`, { headers: key ? { Authorization: 'Bearer ' + key } : {} }, id);
+  const j = await r.json();
+  const ids = (j.data || j.models || []).map(m => m.id || m.name).filter(Boolean);
+  return id === 'openrouter' ? ids.filter(x => x.endsWith(':free')) : ids;
 }
 
 const BASE_SYSTEM = `Sei il consulente botanico di "Garden Manager AI": esperto di botanica, orticoltura, frutticoltura, arboricoltura, fitopatologia, entomologia agraria e progettazione del verde, con riferimento al contesto italiano ed europeo.
@@ -82,61 +336,6 @@ export async function gardenContext({ withPlants = true, withEvents = true } = {
   return lines.join('\n');
 }
 
-function requestBase(model) {
-  const m = model || state.settings?.model || 'claude-opus-5-5';
-  const base = { model: m };
-  // Fallback lato server in caso di rifiuto (non disponibile per Haiku)
-  if (m.startsWith('claude-opus') || m.startsWith('claude-sonnet')) { base.betas = ['server-side-fallback-2026-07-01']; base.fallbacks = 'default'; }
-  return base;
-}
-function textOf(msg) { return msg.content.filter(b => b.type === 'text').map(b => b.text).join(''); }
-function checkStop(msg) {
-  if (msg.stop_reason === 'refusal') throw new AIError('Il servizio AI non ha elaborato questa richiesta. Riformula la domanda.', 'refusal');
-  if (msg.stop_reason === 'max_tokens') throw new AIError('Risposta troppo lunga e interrotta: riprova con una richiesta più mirata.', 'max');
-}
-
-// Chiamata con output strutturato (JSON Schema)
-export async function callJSON({ system, content, schema, maxTokens = 8000, effort = 'medium', model, withContext = true }) {
-  const c = await getClient();
-  const ctx = withContext ? await gardenContext() : '';
-  const sys = [{ type: 'text', text: BASE_SYSTEM }, ...(system ? [{ type: 'text', text: system }] : []), ...(ctx ? [{ type: 'text', text: 'CONTESTO DEL GIARDINO\n' + ctx }] : [])];
-  sys[sys.length - 1].cache_control = { type: 'ephemeral' };
-  try {
-    const msg = await c.beta.messages.create({
-      ...requestBase(model), max_tokens: maxTokens, system: sys,
-      output_config: { effort, format: { type: 'json_schema', schema } },
-      messages: [{ role: 'user', content }],
-    });
-    checkStop(msg);
-    return JSON.parse(textOf(msg));
-  } catch (e) { throw mapError(e); }
-}
-
-// Chat del consulente in streaming, con ricerca web facoltativa
-export async function chatStream({ history, onText, webSearch = false }) {
-  const c = await getClient();
-  const ctx = await gardenContext();
-  const system = [
-    { type: 'text', text: BASE_SYSTEM + '\nRispondi in testo semplice (puoi usare elenchi con trattino e **grassetto**), senza tabelle. Separa in sezioni "Fatti", "Ipotesi" e "Consigli" quando utile. Indica le fonti quando le usi.' },
-    { type: 'text', text: 'CONTESTO DEL GIARDINO\n' + ctx, cache_control: { type: 'ephemeral' } },
-  ];
-  const params = { ...requestBase(), max_tokens: 16000, system, output_config: { effort: 'medium' }, messages: history };
-  if (webSearch) params.tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 4 }];
-  try {
-    const stream = c.beta.messages.stream(params);
-    stream.on('text', (t) => onText && onText(t));
-    const msg = await stream.finalMessage();
-    checkStop(msg);
-    const sources = [];
-    for (const b of msg.content) {
-      if (b.type === 'text' && b.citations) for (const ci of b.citations) if (ci.url && !sources.find(s => s.url === ci.url)) sources.push({ url: ci.url, title: ci.title });
-      if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) if (r.url && !sources.find(s => s.url === r.url)) sources.push({ url: r.url, title: r.title });
-    }
-    return { text: textOf(msg), sources: sources.slice(0, 8), content: msg.content };
-  } catch (e) { throw mapError(e); }
-}
-
-export function imageBlock(b64, media = 'image/jpeg') { return { type: 'image', source: { type: 'base64', media_type: media, data: b64 } }; }
 
 // ── Schemi JSON ──
 const str = (description) => ({ type: 'string', description });

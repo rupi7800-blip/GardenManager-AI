@@ -64,6 +64,36 @@ async function install(context, log) {
   await context.route(/api\.inaturalist\.org\/v1\/taxa\/\d+/, r => r.fulfill({ json: { results: [{ id: 54772, name: 'Arbutus unedo', preferred_common_name: 'corbezzolo', taxon_photos: [{ photo: { id: 1, medium_url: 'http://localhost:8765/icons/icon-192.png', license_code: 'cc-by', attribution: '(c) Mario Rossi, CC BY' } }, { photo: { id: 2, medium_url: 'http://localhost:8765/icons/icon-192.png', license_code: null, attribution: 'all rights reserved' } }] }] } }));
   await context.route(/api\.inaturalist\.org\/v1\/taxa\?/, r => r.fulfill({ json: { results: [{ id: 54772, name: 'Arbutus unedo' }] } }));
   await context.route(/commons\.wikimedia\.org/, r => r.fulfill({ json: { query: { pages: { 1: { imageinfo: [{ thumburl: 'http://localhost:8765/icons/icon-512.png', url: 'x', descriptionurl: 'https://commons.wikimedia.org/wiki/File:x.jpg', extmetadata: { LicenseShortName: { value: 'CC BY-SA 4.0' }, Artist: { value: '<a>Anna</a>' } } }] } } } } }));
+
+  // Google Gemini (servizio principale nei test): la diagnosi restituisce 429 per verificare la rotazione
+  const pick = (keys) => keys.includes('candidati') ? IDENT : keys.includes('certezza') ? DIAG : keys.includes('consiglio') ? TIP : keys.includes('calendario') ? SHEET : keys.includes('proposte') ? DESIGN : keys.includes('piano') ? ORTO : keys.includes('ok') ? { ok: true, pianta: 'Fico' } : keys.includes('id') ? { id: 'prato-festuca', affidabilita: 70, motivo: 'foglie larghe' } : {};
+  await context.route(/generativelanguage\.googleapis\.com/, async r => {
+    const req = r.request(), url = req.url();
+    if (req.method() === 'GET') return r.fulfill({ json: { models: [{ name: 'models/gemini-flash-latest', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-flash-lite-latest', supportedGenerationMethods: ['generateContent'] }] } });
+    const body = JSON.parse(req.postData() || '{}');
+    log.push({ provider: 'gemini', url, headers: req.headers(), body });
+    if (url.includes(':streamGenerateContent')) {
+      const chunks = ['**Fatti**: il fico perde ', 'le foglie in autunno.\n- Consiglio: raccogli le foglie con ruggine.'];
+      const out = chunks.map((t, i) => `data: ${JSON.stringify({ candidates: [{ content: { role: 'model', parts: [{ text: t }] }, ...(i === chunks.length - 1 ? { finishReason: 'STOP', groundingMetadata: body.tools ? { groundingChunks: [{ web: { uri: 'https://www.crea.gov.it/', title: 'CREA' } }] } : undefined } : {}) }] })}\r\n\r\n`).join('');
+      return r.fulfill({ status: 200, headers: { 'content-type': 'text/event-stream' }, body: out });
+    }
+    const keys = Object.keys(body.generationConfig?.responseJsonSchema?.properties || {});
+    if (keys.includes('certezza')) return r.fulfill({ status: 429, json: { error: { code: 429, message: 'Resource exhausted', status: 'RESOURCE_EXHAUSTED' } } });
+    return r.fulfill({ json: { candidates: [{ content: { role: 'model', parts: [{ text: JSON.stringify(pick(keys)) }] }, finishReason: 'STOP' }] } });
+  });
+  // Groq (riserva, formato compatibile OpenAI): il JSON è descritto nel prompt di sistema
+  await context.route(/api\.groq\.com/, async r => {
+    const req = r.request();
+    if (req.method() === 'GET') return r.fulfill({ json: { data: [{ id: 'llama-3.3-70b-versatile' }] } });
+    const body = JSON.parse(req.postData() || '{}');
+    log.push({ provider: 'groq', url: req.url(), headers: req.headers(), body });
+    const sys = body.messages[0].content;
+    const m = sys.match(/JSON Schema[^\n]*\n(\{.*\})/s);
+    const keys = m ? Object.keys(JSON.parse(m[1]).properties) : [];
+    // risposta volutamente incompleta e con testo intorno: deve essere ripulita e completata
+    const j = keys.includes('certezza') ? { ...DIAG, alternative: undefined } : pick(keys);
+    return r.fulfill({ json: { choices: [{ message: { role: 'assistant', content: 'Ecco il risultato:\n```json\n' + JSON.stringify(j) + '\n```' } }] } });
+  });
   await context.route(/api\.anthropic\.com/, async r => {
     const req = r.request();
     const body = JSON.parse(req.postData() || '{}');

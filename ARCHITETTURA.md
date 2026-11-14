@@ -24,10 +24,12 @@ Web app **PWA local-first**, senza passaggi di build: HTML + CSS + JavaScript (m
 
 * **Local-first**: tutti i dati restano sul dispositivo (IndexedDB) e funzionano offline.
   Le funzioni AI, il meteo e le ricerche online richiedono la connessione.
-* **AI**: chiamate dirette dal browser all'API Claude con la **chiave dell'utente**
-  (memorizzata solo nel dispositivo). SDK ufficiale `@anthropic-ai/sdk` incluso in locale
-  (`vendor/`) e caricato **solo al primo uso** di una funzione AI. Output strutturati
-  (JSON Schema) per riconoscimento, diagnosi, schede e progettazione.
+* **AI multi-servizio** (`js/ai.js`, `js/ai-providers.js`): chiamate dirette dal browser con la
+  **chiave dell'utente** (solo nel dispositivo). Tre adattatori: Gemini (API nativa, JSON Schema,
+  foto, ricerca Google), formato compatibile OpenAI (Groq, Mistral, OpenRouter, Cerebras,
+  Hugging Face, DeepSeek, Pollinations, Ollama, OpenAI, altri) e Claude (SDK ufficiale caricato solo
+  se scelto). Rotazione automatica sul servizio successivo in caso di quota esaurita o errore.
+  Le risposte JSON vengono ripulite e completate secondo lo schema.
 * **Moduli indipendenti**: ogni sezione è un file in `js/views/`; la logica in `js/`.
 
 ## 2. Struttura delle schermate
@@ -68,13 +70,17 @@ Il backup esporta tutto (foto comprese) in un file JSON reimportabile.
 * HTML5, CSS con variabili (tema chiaro/scuro), JavaScript ES2022 a moduli, nessun framework.
 * IndexedDB, Service Worker, Web App Manifest, Notification API, Periodic Background Sync (dove supportato).
 * SVG per la planimetria; Canvas per comprimere le foto.
-* Claude API (modello predefinito `claude-opus-5-5`, selezionabile).
+* Servizi AI selezionabili: Gemini (predefinito), Groq, Mistral, OpenRouter, Cerebras, Hugging Face, DeepSeek, Pollinations, Ollama, OpenAI, Claude, qualsiasi servizio compatibile OpenAI.
+* Non inclusi: Perplexity (API senza piano gratuito), Notion AI (nessuna API pubblica di generazione), app gratuite come ChatGPT (non utilizzabili da altre applicazioni).
 
 ## 5. Integrazioni esterne
 
 | Servizio | Uso | Costo | Chiave |
 |---|---|---|---|
-| Claude API (Anthropic) | AI | a consumo | sì, dell'utente |
+| Google Gemini | AI (consigliato) | gratuito con limiti | sì, gratuita |
+| Groq, Mistral, OpenRouter, Cerebras, Hugging Face | AI di riserva | gratuito con limiti | sì, gratuita |
+| Pollinations, Ollama | AI senza chiave / locale | gratuito | no |
+| OpenAI, Claude, DeepSeek | AI | a consumo | sì |
 | Open-Meteo Forecast | meteo, ET0, previsioni 7 gg | gratuito (uso non commerciale) | no |
 | Open-Meteo Archive (ERA5) | clima locale su 10 anni | gratuito | no |
 | Open-Meteo Geocoding | comune → coordinate | gratuito | no |
@@ -93,7 +99,8 @@ riportano i link diretti alle loro pagine per la verifica.
 
 * **Hosting**: gratuito (GitHub Pages, Netlify, Cloudflare Pages: sono file statici).
 * **Dati meteo e botanici**: gratuiti.
-* **AI** (prezzi Claude Opus 5.5: 4 $/M token in input, 20 $/M in output):
+* **AI**: **0 €** con Gemini e gli altri piani gratuiti, nei limiti giornalieri di ciascun servizio
+  (la rotazione automatica li somma). Con un servizio a pagamento, ad esempio Claude Opus 5.5: 4 $/M token in input, 20 $/M in output):
   riconoscimento da foto ≈ 0,02–0,04 $; diagnosi ≈ 0,03–0,05 $; scheda botanica completa
   ≈ 0,08–0,15 $ (generata una volta, poi salvata); consiglio del giorno ≈ 0,01 $ (uno al giorno);
   domanda al consulente ≈ 0,01–0,05 $. Uso tipico di un utente: **1–4 $ al mese**.

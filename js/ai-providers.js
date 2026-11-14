@@ -1,0 +1,87 @@
+// Servizi AI selezionabili. Priorità ai servizi con piano gratuito utilizzabile dal browser.
+// I nomi dei modelli sono modificabili e si possono aggiornare dall'elenco del servizio,
+// perché i piani gratuiti cambiano spesso.
+export const PROVIDERS = {
+  gemini: {
+    label: 'Google Gemini', kind: 'gemini', free: 'gratuito', base: 'https://generativelanguage.googleapis.com/v1beta',
+    model: 'gemini-flash-latest', visionModel: '', vision: true, webSearch: true, needsKey: true,
+    keyUrl: 'https://aistudio.google.com/apikey',
+    note: 'Consigliato. Piano gratuito senza carta di credito (modelli Flash e Flash-Lite), legge le foto, ricerca Google con fonti nel consulente. Limiti giornalieri variabili; nel piano gratuito Google può usare i dati per migliorare i servizi.',
+  },
+  groq: {
+    label: 'Groq (Llama, Qwen…)', kind: 'openai', free: 'gratuito', base: 'https://api.groq.com/openai/v1',
+    model: 'llama-3.3-70b-versatile', visionModel: 'meta-llama/llama-4-scout-17b-16e-instruct', vision: true, needsKey: true,
+    keyUrl: 'https://console.groq.com/keys',
+    note: 'Piano gratuito senza carta, molto veloce. Limiti per minuto e per giorno variabili per modello; le foto usano un modello visione dedicato.',
+  },
+  mistral: {
+    label: 'Mistral AI', kind: 'openai', free: 'gratuito', base: 'https://api.mistral.ai/v1',
+    model: 'mistral-small-latest', visionModel: 'mistral-small-latest', vision: true, needsKey: true,
+    keyUrl: 'https://console.mistral.ai/api-keys',
+    note: 'Piano gratuito (richiede verifica del telefono). Nel piano gratuito i dati possono essere usati per l\'addestramento. Azienda europea.',
+  },
+  openrouter: {
+    label: 'OpenRouter (modelli :free)', kind: 'openai', free: 'gratuito con limiti', base: 'https://openrouter.ai/api/v1',
+    model: 'meta-llama/llama-3.3-70b-instruct:free', visionModel: 'google/gemma-3-27b-it:free', vision: true, needsKey: true,
+    keyUrl: 'https://openrouter.ai/keys',
+    note: 'Un\'unica chiave per molti modelli gratuiti (DeepSeek, Llama, Gemma, Qwen…): usa i modelli che finiscono con ":free". Circa 50 richieste al giorno gratuite (1000 dopo una ricarica di 10 $). I modelli gratuiti cambiano spesso.',
+  },
+  cerebras: {
+    label: 'Cerebras', kind: 'openai', free: 'gratuito', base: 'https://api.cerebras.ai/v1',
+    model: 'llama-3.3-70b', visionModel: '', vision: false, needsKey: true,
+    keyUrl: 'https://cloud.cerebras.ai/',
+    note: 'Piano gratuito con quota giornaliera di token; solo testo (niente foto).',
+  },
+  huggingface: {
+    label: 'Hugging Face', kind: 'openai', free: 'piccolo credito mensile', base: 'https://router.huggingface.co/v1',
+    model: 'meta-llama/Llama-3.3-70B-Instruct', visionModel: 'Qwen/Qwen2.5-VL-7B-Instruct', vision: true, needsKey: true,
+    keyUrl: 'https://huggingface.co/settings/tokens',
+    note: 'Credito gratuito mensile ridotto: adatto come riserva.',
+  },
+  deepseek: {
+    label: 'DeepSeek', kind: 'openai', free: 'economico (crediti iniziali)', base: 'https://api.deepseek.com',
+    model: 'deepseek-chat', visionModel: '', vision: false, needsKey: true,
+    keyUrl: 'https://platform.deepseek.com/api_keys',
+    note: 'API molto economica, a volte con crediti iniziali; solo testo. I modelli DeepSeek sono usabili gratis anche tramite OpenRouter.',
+  },
+  pollinations: {
+    label: 'Pollinations (senza chiave)', kind: 'openai', free: 'gratuito, sperimentale', base: 'https://text.pollinations.ai/openai',
+    model: 'openai', visionModel: 'openai', vision: true, needsKey: false, endpoint: '',
+    keyUrl: 'https://pollinations.ai/',
+    note: 'Funziona senza chiave ma con limiti stretti e affidabilità variabile. Sconsigliato per dati personali: le richieste passano da un servizio comunitario.',
+  },
+  ollama: {
+    label: 'Ollama (sul tuo computer)', kind: 'openai', free: 'gratuito, locale', base: 'http://localhost:11434/v1',
+    model: 'llama3.2-vision', visionModel: 'llama3.2-vision', vision: true, needsKey: false,
+    keyUrl: 'https://ollama.com/download',
+    note: 'Modelli eseguiti sul tuo computer: gratuiti e privati. Avvia Ollama con OLLAMA_ORIGINS impostato all\'indirizzo dell\'app.',
+  },
+  openai: {
+    label: 'OpenAI GPT', kind: 'openai', free: 'a pagamento', base: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini', visionModel: 'gpt-4o-mini', vision: true, needsKey: true,
+    keyUrl: 'https://platform.openai.com/api-keys',
+    note: 'Nessun piano API gratuito (ChatGPT gratuito non include l\'API).',
+  },
+  anthropic: {
+    label: 'Anthropic Claude', kind: 'anthropic', free: 'a pagamento', base: 'https://api.anthropic.com',
+    model: 'claude-opus-5-5', visionModel: '', vision: true, webSearch: true, needsKey: true,
+    keyUrl: 'https://console.anthropic.com/',
+    note: 'A pagamento a consumo. Massima qualità per diagnosi e schede.',
+  },
+  custom: {
+    label: 'Altro servizio compatibile OpenAI', kind: 'openai', free: '—', base: '',
+    model: '', visionModel: '', vision: true, needsKey: false,
+    keyUrl: '',
+    note: 'Qualsiasi servizio con API compatibile OpenAI (es. LM Studio, Together, SambaNova, Nvidia NIM): indica indirizzo, chiave e modello.',
+  },
+};
+
+// Servizi valutati e non inclusi, con il motivo (mostrati in Impostazioni)
+export const NOT_INCLUDED = [
+  ['Perplexity', 'l\'API Sonar non ha un piano gratuito (solo crediti per abbonati Pro).'],
+  ['Notion AI', 'non offre un\'API pubblica per generare testo.'],
+  ['ChatGPT, Copilot, Gemini app', 'le app gratuite non sono utilizzabili da altre applicazioni: serve l\'API.'],
+  ['GitHub Models', 'servizio gratuito segnalato come dismesso nel 2026.'],
+];
+
+export const PROVIDER_ORDER = Object.keys(PROVIDERS);

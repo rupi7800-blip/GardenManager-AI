@@ -36,8 +36,19 @@ const BASE = '' + (process.env.BASE || 'http://localhost:8765') + '/index.html';
   });
   await step('impostazioni chiave AI', async () => {
     await page.goto(BASE + '#/impostazioni');
-    await page.fill('#sKey', 'sk-ant-test');
-    await page.click('#sSaveAI');
+    await page.waitForSelector('[data-prov=gemini]');
+    await page.fill('[data-prov=gemini] [data-f=key]', 'AIza-test-gemini');
+    await page.check('[data-prov=gemini] [data-f=enabled]');
+    await page.click('[data-prov=groq] summary');
+    await page.check('[data-prov=groq] [data-f=enabled]');
+    await page.fill('[data-prov=groq] [data-f=key]', 'gsk-test-groq');
+    await page.click('#aiSave');
+    await page.waitForSelector('#aiCard .chip.ok');
+    await page.click('[data-test=gemini]');
+    await page.waitForSelector('[data-out=gemini] .chip.ok');
+    await page.click('[data-models=gemini]');
+    await page.waitForFunction(() => document.querySelectorAll('#ml-gemini option').length === 2);
+    await page.screenshot({ path: OUT + '/01-impostazioni-ai.png', fullPage: true });
   });
   await step('giardino e clima', async () => {
     await page.goto(BASE + '#/giardino');
@@ -203,7 +214,9 @@ const BASE = '' + (process.env.BASE || 'http://localhost:8765') + '/index.html';
   });
   await step('consulente (streaming)', async () => {
     await page.goto(BASE + '#/consulente');
+    await page.check('#ws');
     await page.click('#sugg button');
+    await page.waitForSelector('.msg.assistant .src a', { timeout: 15000 });
     await page.waitForSelector('.msg.assistant b', { timeout: 15000 });
     await shot('13-consulente');
   });
@@ -211,7 +224,7 @@ const BASE = '' + (process.env.BASE || 'http://localhost:8765') + '/index.html';
     await page.goto(BASE + '#/impostazioni');
     const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#bExp')]);
     const j = JSON.parse(fs.readFileSync(await dl.path(), 'utf8'));
-    if (!j.data.plants.length || JSON.stringify(j).includes('sk-ant-test')) throw new Error('backup errato');
+    if (!j.data.plants.length || /AIza-test|gsk-test/.test(JSON.stringify(j))) throw new Error('backup errato');
     console.log('   backup: piante', j.data.plants.length, 'attività', j.data.tasks.length, 'foto', j.data.photos.length);
   });
   await step('tema scuro + mobile', async () => {
@@ -239,10 +252,11 @@ const BASE = '' + (process.env.BASE || 'http://localhost:8765') + '/index.html';
     await context.setOffline(false);
   });
 
-  // Verifica delle richieste all'API Claude
-  const r0 = log[0];
-  console.log('\nRichieste AI:', log.length, '| modello:', r0?.body.model, '| beta:', r0?.headers['anthropic-beta'], '| fallbacks:', r0?.body.fallbacks, '| effort:', r0?.body.output_config?.effort);
-  console.log('Header browser:', r0?.headers['anthropic-dangerous-direct-browser-access'], '| immagini nel riconoscimento:', log.find(l => JSON.stringify(l.body).includes('"type":"image"')) ? 'sì' : 'no');
+  // Verifica delle richieste ai servizi AI
+  const g = log.filter(l => l.provider === 'gemini'), q = log.filter(l => l.provider === 'groq');
+  console.log('\nRichieste Gemini:', g.length, '| Groq (riserva):', q.length, '| chiave Gemini nell\'header:', g[0]?.headers['x-goog-api-key'] === 'AIza-test-gemini');
+  console.log('Immagini inviate a Gemini:', g.some(l => JSON.stringify(l.body).includes('inlineData')) ? 'sì' : 'no', '| diagnosi passata a Groq dopo il 429:', q.some(l => l.body.messages[0].content.includes('certezza')) ? 'sì' : 'no');
+  console.log('Ricerca Google nel consulente:', g.some(l => l.body.tools) ? 'sì' : 'no', '| richieste a Claude:', log.filter(l => !l.provider).length);
   console.log('\nErrori JS:', errors.length ? errors : 'nessuno');
   await browser.close();
 })();

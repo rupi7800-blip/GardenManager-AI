@@ -219,7 +219,7 @@ export async function render(host) {
     box.innerHTML = `<div class="card-head"><h2>✨ Analisi e proposte AI</h2>${a ? `<small>${new Date(a.date).toLocaleDateString('it-IT')}</small>` : ''}</div>
       ${hasAI() ? `<div class="form-grid"><div class="field full"><label>Obiettivi</label>${checks('goal', ['bassa manutenzione', 'impollinatori e biodiversità', 'ombra e frescura', 'siepe e privacy', 'colori e fioriture scalari', 'orto e frutti', 'risparmio idrico', 'zona relax', 'adatto a bambini e animali'], cur.goals || ['bassa manutenzione', 'impollinatori e biodiversità'])}</div>
         <div class="field full"><label for="aiNote">Note su zone e desideri</label><textarea id="aiNote" placeholder="Es. angolo nord-est in ombra sotto il noce, vorrei un percorso fino all'orto">${esc(cur.note || '')}</textarea></div>
-        <div class="field full"><label>Foto del giardino (facoltative)</label>${photoInputHTML('aiPh')}</div></div><button class="primary" id="aiGo">Analizza e proponi</button>` : '<p class="muted">Inserisci la chiave API in Impostazioni per l\'analisi AI di foto, esposizione e piante esistenti.</p>'}
+        <div class="field full"><label>Foto del giardino (facoltative)</label>${photoInputHTML('aiPh')}</div></div><button class="primary" id="aiGo">Analizza e proponi</button>` : '<p class="muted">Attiva un servizio AI (anche gratuito) in Impostazioni per l\'analisi AI di foto, esposizione e piante esistenti.</p>'}
       <div id="aiRes" style="margin-top:12px">${a ? aiHTML(a.r) : ''}</div>`;
     if (!hasAI()) return;
     const ph = bindPhotoInput(box, 'aiPh', { max: 3 });

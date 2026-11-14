@@ -29,7 +29,7 @@ export function speciesSheetHTML(s, { actions = false } = {}) {
   return `<div class="card sheet">
     <div class="card-head"><div><h2 style="margin:0">${s.emoji || CATEGORIES[s.cat]?.emoji || '🌿'} ${esc(s.it)} ${s.aiSheet ? '<span class="badge-ai">scheda AI</span>' : ''}</h2><i class="sci">${esc(s.sci)}</i> · ${esc(s.fam || '')}</div>
       ${actions ? `<div class="row"><button class="primary" id="addG">+ Al giardino</button>${hasAI() ? `<button id="aiSheet">${incomplete ? '✨ Genera scheda completa con AI' : '✨ Aggiorna con AI'}</button>` : ''}</div>` : ''}</div>
-    ${incomplete ? `<div class="alert info">Scheda essenziale${s.source === 'gbif' ? ' (da GBIF)' : ''}. ${hasAI() ? 'Usa «Genera scheda completa con AI» per ottenere esigenze, calendario, problemi e propagazione specifici della specie.' : 'Inserisci la chiave AI in Impostazioni per generare la scheda completa.'}</div>` : ''}
+    ${incomplete ? `<div class="alert info">Scheda essenziale${s.source === 'gbif' ? ' (da GBIF)' : ''}. ${hasAI() ? 'Usa «Genera scheda completa con AI» per ottenere esigenze, calendario, problemi e propagazione specifici della specie.' : 'Attiva un servizio AI (anche gratuito) in Impostazioni per generare la scheda completa.'}</div>` : ''}
     ${s.aiSheet ? `<div class="alert warn">Scheda generata dall'AI il ${new Date(s.aiDate).toLocaleDateString('it-IT')}: verifica i dati critici sulle fonti indicate in fondo.</div>` : ''}
     ${s.warn ? `<div class="alert warn">⚠️ ${esc(s.warn)}</div>` : ''}
     <h3>Identificazione</h3><dl>

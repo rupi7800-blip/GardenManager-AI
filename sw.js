@@ -1,8 +1,8 @@
 // Service worker: app installabile e consultabile offline, notifiche in background.
-const VERSION = 'gm-v2';
+const VERSION = 'gm-v3';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
-  'js/app.js', 'js/db.js', 'js/ui.js', 'js/store.js', 'js/weather.js', 'js/ai.js', 'js/botany.js', 'js/tasks.js', 'js/irrigation.js', 'js/tips.js', 'js/notify.js', 'js/data/species.js',
+  'js/app.js', 'js/ai-providers.js', 'js/db.js', 'js/ui.js', 'js/store.js', 'js/weather.js', 'js/ai.js', 'js/botany.js', 'js/tasks.js', 'js/irrigation.js', 'js/tips.js', 'js/notify.js', 'js/data/species.js',
   'js/views/dashboard.js', 'js/views/garden.js', 'js/views/garden-form.js', 'js/views/plants.js', 'js/views/plant-form.js', 'js/views/plant-detail.js', 'js/views/species-detail.js',
   'js/views/recognize.js', 'js/views/calendar.js', 'js/views/task-ui.js', 'js/views/diagnose.js', 'js/views/design.js', 'js/views/orto.js', 'js/views/lawn.js',
   'js/views/assistant.js', 'js/views/settings.js', 'js/views/onboarding.js',

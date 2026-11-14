@@ -1,7 +1,8 @@
 import { state, saveSettings, MODES, CUSTOM_TECHNIQUES } from '../store.js';
 import { exportAll, importAll } from '../db.js';
 import { esc, $, $$, options, checks, toast, confirmDialog } from '../ui.js';
-import { MODELS } from '../ai.js';
+import { PROVIDERS, aiConfig, testProvider, listModels, hasAI } from '../ai.js';
+import { PROVIDER_ORDER, NOT_INCLUDED } from '../ai-providers.js';
 import { NOTIFY_TYPES, requestPermission, notifSupported, runNotificationChecks } from '../notify.js';
 import { downloadFile } from '../tasks.js';
 import { applyTheme, route, loadContext } from '../app.js';
@@ -10,14 +11,8 @@ export async function render(view) {
   const s = state.settings, n = s.notify;
   const perm = notifSupported() ? Notification.permission : 'unsupported';
   view.innerHTML = `
+  <div class="card" id="aiCard" style="margin-bottom:14px"></div>
   <div class="grid g2">
-  <div class="card"><h2>✨ Intelligenza artificiale</h2>
-    <div class="field"><label for="sKey">Chiave API Claude (Anthropic)</label><input id="sKey" type="password" autocomplete="off" value="${esc(s.apiKey)}" placeholder="sk-ant-…">
-      <div class="hint">Si crea su console.anthropic.com. Resta salvata solo su questo dispositivo, non è inclusa nei backup e viene inviata solo all'API di Anthropic.</div></div>
-    <div class="field"><label for="sModel">Modello</label><select id="sModel">${options(MODELS, s.model)}</select>
-      <div class="hint">Schede e consigli vengono salvati per ridurre le chiamate. Costo tipico: 1–4 $ al mese con Opus.</div></div>
-    <button class="primary" id="sSaveAI">Salva</button>
-  </div>
   <div class="card"><h2>🌿 Filosofia di gestione</h2>
     <div class="stack">${Object.entries(MODES).map(([k, v]) => `<label style="font-weight:400;display:flex;gap:10px;align-items:flex-start;margin:0;padding:8px;border:1px solid var(--line);border-radius:10px;cursor:pointer"><input type="radio" name="mode" value="${k}" ${s.mode === k ? 'checked' : ''} style="margin-top:4px"><span><b>${v.label}</b><br><small>${esc(v.desc)}</small></span></label>`).join('')}</div>
     <div id="customBox" ${s.mode === 'personalizzata' ? '' : 'hidden'} style="margin-top:10px"><label>Tecniche da combinare</label>${checks('tech', CUSTOM_TECHNIQUES, s.customMode)}</div>
@@ -47,12 +42,12 @@ export async function render(view) {
     <div id="storage" class="hint" style="margin-top:8px"></div>
   </div>
   <div class="card"><h2>ℹ️ Informazioni</h2>
-    <p><small>Meteo e clima: Open-Meteo (ERA5). Nomenclatura: GBIF Backbone Taxonomy. Immagini: iNaturalist e Wikimedia Commons, solo con licenza Creative Commons, con autore e link alla fonte. AI: Claude (Anthropic).</small></p>
+    <p><small>Meteo e clima: Open-Meteo (ERA5). Nomenclatura: GBIF Backbone Taxonomy. Immagini: iNaturalist e Wikimedia Commons, solo con licenza Creative Commons, con autore e link alla fonte. AI: il servizio scelto sopra (Gemini, Groq, Mistral, OpenRouter, Claude…).</small></p>
     <p><small>Le diagnosi e le identificazioni AI sono ipotesi da verificare; per organismi da quarantena rivolgiti al Servizio fitosanitario regionale. Usa i prodotti fitosanitari solo secondo etichetta.</small></p>
   </div>
   </div>`;
 
-  $('#sSaveAI', view).onclick = async () => { await saveSettings({ apiKey: $('#sKey', view).value.trim(), model: $('#sModel', view).value }); toast('Impostazioni AI salvate'); };
+  renderAI($('#aiCard', view));
   $$('[name=mode]', view).forEach(r => r.onchange = async () => { $('#customBox', view).hidden = r.value !== 'personalizzata'; await saveSettings({ mode: r.value }); toast('Filosofia di gestione: ' + MODES[r.value].label); });
   $$('[name=tech]', view).forEach(c => c.onchange = () => saveSettings({ customMode: $$('[name=tech]:checked', view).map(x => x.value) }));
   const collectNotify = (enabled) => ({ ...n, enabled, time: $('#nTime', view).value || '08:00', advanceDays: +$('#nAdv', view).value, minPriority: +$('#nPrio', view).value, weekly: $('#nWeek', view).checked, types: $$('[name=ntype]:checked', view).map(x => x.value) });
@@ -87,4 +82,61 @@ export async function render(view) {
     } catch (err) { toast('Importazione non riuscita: ' + err.message, 5000); }
   };
   if (navigator.storage?.estimate) navigator.storage.estimate().then(est => { $('#storage', view).textContent = `Spazio usato: ${(est.usage / 1048576).toFixed(1)} MB${est.quota ? ' su ' + Math.round(est.quota / 1048576) + ' MB disponibili' : ''}.`; navigator.storage.persist?.(); });
+}
+
+// Scelta e configurazione dei servizi AI
+function renderAI(box) {
+  const cfg = aiConfig();
+  const chip = (f) => `<span class="chip ${/^gratuito/.test(f) ? 'ok' : /pagamento/.test(f) ? 'warn' : ''}">${esc(f)}</span>`;
+  box.innerHTML = `<div class="card-head"><h2>✨ Intelligenza artificiale</h2>${hasAI() ? '<span class="chip ok">attiva</span>' : '<span class="chip warn">non configurata</span>'}</div>
+    <p class="muted">Scegli uno o più servizi. Per iniziare gratis: crea una chiave su <a href="${PROVIDERS.gemini.keyUrl}" target="_blank" rel="noopener">Google AI Studio</a> (un minuto, senza carta) e incollala in Google Gemini. Le chiavi restano solo su questo dispositivo e non entrano nei backup.</p>
+    <div class="form-grid">
+      <div class="field"><label for="aiPrimary">Servizio principale</label><select id="aiPrimary">${options(PROVIDER_ORDER.map(id => [id, `${PROVIDERS[id].label} — ${PROVIDERS[id].free}`]), cfg.primary)}</select></div>
+      <div class="field"><label>Servizi di riserva</label><label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" id="aiFallback" ${cfg.fallback ? 'checked' : ''}> Se finisce la quota gratuita o il servizio non risponde, usa automaticamente gli altri servizi attivi</label></div>
+    </div>
+    <div class="stack" id="provList">${PROVIDER_ORDER.map(id => { const p = PROVIDERS[id], c = cfg.providers[id]; const showBase = id === 'custom' || id === 'ollama'; return `<details class="card" style="box-shadow:none;padding:10px 14px" data-prov="${id}" ${c.enabled || id === cfg.primary ? 'open' : ''}>
+      <summary style="cursor:pointer"><b>${esc(p.label)}</b> ${chip(p.free)} ${c.enabled ? '<span class="chip sage">attivo</span>' : ''} <small>${p.vision ? '📷 foto' : 'solo testo'}${p.webSearch ? ' · 🔎 fonti web' : ''}</small></summary>
+      <p style="margin-top:8px"><small>${esc(p.note)}${p.keyUrl ? ` <a href="${p.keyUrl}" target="_blank" rel="noopener">${p.needsKey ? 'Ottieni la chiave ↗' : 'Sito ↗'}</a>` : ''}</small></p>
+      <label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" data-f="enabled" ${c.enabled ? 'checked' : ''}> Usa questo servizio</label>
+      <div class="form-grid" style="margin-top:8px">
+        ${p.needsKey || id === 'custom' ? `<div class="field full"><label>Chiave API${p.needsKey ? '' : ' (se richiesta)'}</label><input type="password" autocomplete="off" data-f="key" value="${esc(c.key)}"></div>` : ''}
+        ${showBase ? `<div class="field full"><label>Indirizzo del servizio</label><input type="text" data-f="base" value="${esc(c.base || p.base)}" placeholder="https://…/v1"></div>` : ''}
+        <div class="field"><label>Modello</label><input type="text" data-f="model" list="ml-${id}" value="${esc(c.model || p.model)}"></div>
+        ${p.vision && p.kind === 'openai' ? `<div class="field"><label>Modello per le foto</label><input type="text" data-f="visionModel" list="ml-${id}" value="${esc(c.visionModel || p.visionModel)}"></div>` : ''}
+        <datalist id="ml-${id}"></datalist>
+      </div>
+      <div class="row"><button class="small" data-test="${id}">Prova collegamento</button><button class="small ghost" data-models="${id}">Aggiorna elenco modelli</button><small data-out="${id}"></small></div>
+    </details>`; }).join('')}</div>
+    <div class="row" style="margin-top:12px"><button class="primary" id="aiSave">Salva servizi AI</button></div>
+    <details style="margin-top:12px"><summary><small>Servizi valutati e non inclusi</small></summary><ul>${NOT_INCLUDED.map(([n, w]) => `<li><small><b>${esc(n)}</b>: ${esc(w)}</small></li>`).join('')}</ul>
+      <small>I limiti dei piani gratuiti cambiano spesso: verifica le condizioni sul sito di ogni servizio.</small></details>`;
+  const collect = () => {
+    const providers = {};
+    for (const d of $$('[data-prov]', box)) {
+      const o = {};
+      for (const el of $$('[data-f]', d)) o[el.dataset.f] = el.type === 'checkbox' ? el.checked : el.value.trim();
+      providers[d.dataset.prov] = o;
+    }
+    return { primary: $('#aiPrimary', box).value, fallback: $('#aiFallback', box).checked, providers };
+  };
+  $('#aiPrimary', box).onchange = (e) => { const d = $(`[data-prov="${e.target.value}"]`, box); d.open = true; $('[data-f=enabled]', d).checked = true; };
+  $('#aiSave', box).onclick = async () => {
+    const ai = collect();
+    ai.providers[ai.primary].enabled = true;
+    await saveSettings({ ai, apiKey: '' });
+    toast(hasAI() ? 'Servizi AI salvati' : 'Salvato: manca ancora una chiave valida');
+    renderAI(box);
+  };
+  $$('[data-test]', box).forEach(b => b.onclick = async () => {
+    const id = b.dataset.test, out = $(`[data-out="${id}"]`, box);
+    out.textContent = 'Prova in corso…';
+    try { const r = await testProvider(id, { ...state.settings, ai: collect() }); out.innerHTML = `<span class="chip ok">funziona</span> ${esc(r.model)} · «${esc(r.pianta)}»`; }
+    catch (e) { out.innerHTML = `<span class="chip danger">errore</span> ${esc(e.message)}`; }
+  });
+  $$('[data-models]', box).forEach(b => b.onclick = async () => {
+    const id = b.dataset.models, out = $(`[data-out="${id}"]`, box);
+    out.textContent = 'Lettura modelli…';
+    try { const list = await listModels(id, { ...state.settings, ai: collect() }); $(`#ml-${id}`, box).innerHTML = list.map(m => `<option value="${esc(m)}">`).join(''); out.textContent = `${list.length} modelli disponibili: scegli dal campo Modello.`; }
+    catch (e) { out.innerHTML = `<span class="chip danger">errore</span> ${esc(e.message)}`; }
+  });
 }

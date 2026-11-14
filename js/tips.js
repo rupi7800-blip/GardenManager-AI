@@ -1,5 +1,5 @@
 // "Il consiglio del giorno": un consiglio concreto al giorno sulle piante presenti.
-// Con la chiave AI viene elaborato da Claude; senza, da regole basate su schede, meteo e attività.
+// Con la chiave AI viene elaborato dal servizio AI scelto; senza, da regole basate su schede, meteo e attività.
 import { kvGet, kvSet } from './db.js';
 import { state } from './store.js';
 import { callJSON, SCHEMA_TIP, hasAI } from './ai.js';

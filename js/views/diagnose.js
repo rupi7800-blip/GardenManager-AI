@@ -11,7 +11,7 @@ export async function render(view, params, query) {
   const plants = await gardenPlants();
   const pre = query?.get('plant') || '';
   view.innerHTML = `
-  ${hasAI() ? '' : '<div class="alert warn">La diagnosi da foto usa l\'AI: inserisci la chiave API in <a href="#/impostazioni">Impostazioni</a>. Intanto puoi consultare la guida ai problemi della specie qui sotto.</div>'}
+  ${hasAI() ? '' : '<div class="alert warn">La diagnosi da foto usa l\'AI: attiva un servizio AI gratuito (es. Google Gemini) in <a href="#/impostazioni">Impostazioni</a>. Intanto puoi consultare la guida ai problemi della specie qui sotto.</div>'}
   <div class="card"><div class="form-grid">
     <div class="field"><label for="dPlant">Pianta</label><select id="dPlant"><option value="">— pianta non in archivio —</option>${options(plants.map(p => [p.id, p.name]), pre)}</select></div>
     <div class="field"><label for="dOrgan">Parte interessata</label><select id="dOrgan">${options(ORGANS, 'foglie')}</select></div>

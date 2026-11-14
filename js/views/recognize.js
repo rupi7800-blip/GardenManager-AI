@@ -7,7 +7,7 @@ import { go } from '../app.js';
 
 export async function render(view) {
   view.innerHTML = `
-  ${hasAI() ? '' : '<div class="alert warn">Il riconoscimento da foto e da descrizione usa l\'AI: inserisci la tua chiave API Claude in <a href="#/impostazioni">Impostazioni</a>. Il confronto con le immagini online qui sotto funziona anche senza chiave.</div>'}
+  ${hasAI() ? '' : '<div class="alert warn">Il riconoscimento da foto e da descrizione usa l\'AI: attiva un servizio AI gratuito (es. Google Gemini) in <a href="#/impostazioni">Impostazioni</a>. Il confronto con le immagini online qui sotto funziona anche senza chiave.</div>'}
   <div class="tabs"><button class="on" data-m="foto">📷 Da fotografia</button><button data-m="desc">✍️ Da descrizione</button><button data-m="web">🔎 Confronto immagini</button></div>
   <div class="card" id="mFoto">
     <p class="muted">Carica fino a 4 foto della stessa pianta: <b>foglia</b> (fronte e retro), <b>fiore</b>, <b>frutto</b>, <b>corteccia</b>, <b>portamento</b>. Più organi = identificazione più affidabile.</p>

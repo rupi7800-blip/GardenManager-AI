@@ -71,7 +71,7 @@ export async function exportAll() {
     let rows = await db.all(s);
     if (s === 'photos') rows = await Promise.all(rows.map(async p => ({ ...p, blob: undefined, dataUrl: await blobToDataURL(p.blob) })));
     // la chiave API non entra mai nei backup
-    if (s === 'kv') rows = rows.filter(r => !r.key.startsWith('cache:')).map(r => r.key === 'settings' ? { ...r, value: { ...r.value, apiKey: '' } } : r);
+    if (s === 'kv') rows = rows.filter(r => !r.key.startsWith('cache:')).map(r => r.key === 'settings' ? { ...r, value: stripKeys(r.value) } : r);
     out.data[s] = rows;
   }
   return out;
@@ -83,7 +83,7 @@ export async function importAll(json, { replace = false } = {}) {
     if (replace && s !== 'kv') await db.clear(s);
     if (s === 'kv') {
       const cur = await db.get('kv', 'settings');
-      rows = rows.map(r => r.key === 'settings' ? { ...r, value: { ...r.value, apiKey: cur?.value?.apiKey || '' } } : r);
+      rows = rows.map(r => r.key === 'settings' ? { ...r, value: keepKeys(r.value, cur?.value) } : r);
     }
     const fixed = s === 'photos' ? await Promise.all(rows.map(async p => ({ ...p, blob: await (await fetch(p.dataUrl)).blob(), dataUrl: undefined }))) : rows;
     await db.putMany(s, fixed);
@@ -91,4 +91,15 @@ export async function importAll(json, { replace = false } = {}) {
 }
 export function blobToDataURL(blob) {
   return new Promise((res, rej) => { if (!blob) return res(null); const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+}
+
+// Le chiavi dei servizi AI non entrano mai nei backup e non vengono sovrascritte dall'importazione
+function stripKeys(v = {}) {
+  const providers = Object.fromEntries(Object.entries(v.ai?.providers || {}).map(([k, p]) => [k, { ...p, key: '' }]));
+  return { ...v, apiKey: '', ai: { ...(v.ai || {}), providers } };
+}
+function keepKeys(v = {}, cur = {}) {
+  const providers = Object.fromEntries(Object.entries(v.ai?.providers || {}).map(([k, p]) => [k, { ...p, key: cur?.ai?.providers?.[k]?.key || '' }]));
+  for (const [k, p] of Object.entries(cur?.ai?.providers || {})) if (!providers[k]) providers[k] = p;
+  return { ...v, apiKey: cur?.apiKey || '', ai: { ...(v.ai || {}), providers } };
 }

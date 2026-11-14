@@ -5,7 +5,8 @@ import { SPECIES, SPECIES_BY_ID, CATEGORIES } from './data/species.js';
 export const state = { garden: null, gardens: [], settings: null };
 
 export const DEFAULT_SETTINGS = {
-  apiKey: '', model: 'claude-opus-5-5', theme: 'auto', userName: '',
+  apiKey: '', theme: 'auto', userName: '',
+  ai: { primary: 'gemini', fallback: true, providers: {} },
   mode: 'biologica', customMode: ['prevenzione', 'compostaggio', 'pacciamatura', 'monitoraggio'],
   notify: { enabled: false, time: '08:00', advanceDays: 1, types: ['attività', 'meteo', 'potatura', 'concimazione', 'semina', 'raccolta', 'controllo', 'irrigazione'], minPriority: 1, weekly: true },
   webSearch: false,
