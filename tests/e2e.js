@@ -1,0 +1,248 @@
+const { chromium } = require('playwright');
+const { install } = require('./mocks.js');
+const fs = require('fs');
+const OUT = process.env.SHOTS || __dirname + '/shots';
+fs.mkdirSync(OUT, { recursive: true });
+const BASE = '' + (process.env.BASE || 'http://localhost:8765') + '/index.html';
+
+(async () => {
+  const browser = await chromium.launch();
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
+  const log = [];
+  await install(context, log);
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('dialog', d => d.accept('Ipotesi B'));
+  const step = async (name, fn) => { try { await fn(); console.log('✓', name); } catch (e) { console.log('✗', name, '-', e.message.split('\n')[0]); await page.screenshot({ path: `${OUT}/fail-${name.replace(/\W+/g, '_')}.png` }); } };
+  const shot = (n) => page.screenshot({ path: `${OUT}/${n}.png`, fullPage: true });
+
+  await step('onboarding', async () => {
+    await page.goto(BASE);
+    await page.waitForSelector('#gardenForm');
+    await page.fill('#gName', 'Giardino di casa');
+    await page.fill('#gPlace', 'Bergamo');
+    await page.click('#gSearch');
+    await page.click('#gResults button');
+    await page.fill('#gArea', '600');
+    await page.selectOption('#gSoil', 'franco (medio impasto)');
+    await page.selectOption('#gExp', 'pieno sole');
+    await page.check('input[name=features][value=orto]');
+    await page.check('input[name=features][value=prato]');
+    await page.fill('#obName', 'Rupi');
+    await page.click('#obSave');
+    await page.waitForSelector('.hero', { timeout: 15000 });
+  });
+  await step('impostazioni chiave AI', async () => {
+    await page.goto(BASE + '#/impostazioni');
+    await page.fill('#sKey', 'sk-ant-test');
+    await page.click('#sSaveAI');
+  });
+  await step('giardino e clima', async () => {
+    await page.goto(BASE + '#/giardino');
+    await page.waitForSelector('text=zona USDA');
+    const z = await page.textContent('#climCard');
+    if (!/Gelate tipiche/.test(z)) throw new Error('clima non mostrato');
+    await shot('02-giardino');
+  });
+  const addFromArchive = async (q, name) => {
+    await page.goto(BASE + '#/piante');
+    await page.fill('#sq', q);
+    await page.click(`[data-add]`);
+    await page.waitForSelector('#plantForm');
+    if (name) await page.fill('#pfName', name);
+    await page.click('[data-save]');
+    await page.waitForSelector('#tabBody');
+  };
+  await step('aggiungi piante da archivio', async () => {
+    await addFromArchive('fico', 'Fico vicino al cancello');
+    await addFromArchive('pesco');
+    await addFromArchive('Rosa', 'Rose del vialetto');
+    await addFromArchive('limone');
+    await page.click('[data-tab=attivita]');
+    await shot('03-pianta');
+  });
+  await step('dashboard', async () => {
+    await page.goto(BASE + '#/dashboard');
+    await page.waitForSelector('#tipCard .tip-text', { timeout: 15000 });
+    await page.waitForSelector('#irrCard .list, #irrCard .empty');
+    const txt = await page.textContent('#view');
+    if (!/Rischio gelata/.test(txt)) throw new Error('allerta gelo assente');
+    await shot('04-dashboard');
+  });
+  await step('calendario + completa attività + ICS', async () => {
+    await page.goto(BASE + '#/calendario');
+    await page.waitForSelector('[data-task]');
+    const n = await page.locator('[data-task]').count();
+    await page.locator('[data-task] [data-open]').first().click();
+    await page.fill('#tNotes', 'Fatto con forbici disinfettate');
+    await page.click('[data-done]');
+    await page.waitForTimeout(400);
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#icsGo')]);
+    const p = await dl.path(); const ics = fs.readFileSync(p, 'utf8');
+    if (!/BEGIN:VEVENT/.test(ics) || !/VALARM/.test(ics)) throw new Error('ICS non valido');
+    fs.writeFileSync(OUT + '/export.ics', ics);
+    await page.click('[data-mode=mese]');
+    await page.waitForSelector('.cal');
+    await shot('05-calendario-mese');
+    console.log('   attività in elenco:', n);
+  });
+  await step('nuova attività ricorrente', async () => {
+    await page.click('#cNew');
+    await page.fill('#tfTitle', 'Controllo impianto irrigazione');
+    await page.selectOption('#tfType', 'manutenzione');
+    await page.fill('#tfEvery', '2');
+    await page.selectOption('select[name=unit]', 'week');
+    await page.click('[data-save]');
+    await page.waitForTimeout(300);
+  });
+  await step('riconoscimento da foto', async () => {
+    await page.goto(BASE + '#/riconosci');
+    await page.setInputFiles('#recPh', require('path').join(__dirname, '../icons/icon-512.png'));
+    await page.waitForSelector('#recPh-prev img');
+    await page.click('#recGo');
+    await page.waitForSelector('text=Corbezzolo', { timeout: 15000 });
+    await page.click('[data-img="0"]');
+    await page.waitForSelector('#img0 figure');
+    const figs = await page.locator('#img0 figure').count();
+    if (figs !== 2) throw new Error('attese 2 immagini con licenza (1 iNat + 1 Commons), trovate ' + figs);
+    await shot('06-riconoscimento');
+    await page.click('[data-ok="0"]');
+    await page.waitForSelector('#plantForm');
+    await page.click('[data-save]');
+    await page.waitForSelector('#tabBody');
+  });
+  await step('scheda AI specie', async () => {
+    await page.click('text=scheda botanica');
+    await page.waitForSelector('#aiSheet');
+    await page.click('#aiSheet');
+    await page.waitForSelector('text=scheda AI', { timeout: 15000 });
+    await page.click('#loadImgs'); await page.waitForSelector('#imgs figure');
+    await shot('07-scheda-ai');
+  });
+  await step('ricerca GBIF', async () => {
+    await page.goto(BASE + '#/piante');
+    await page.fill('#gq', 'Arbutus');
+    await page.click('#gBtn');
+    await page.waitForSelector('[data-g]');
+  });
+  await step('descrizione', async () => {
+    await page.goto(BASE + '#/riconosci');
+    await page.click('[data-m=desc]');
+    await page.fill('#recDesc', 'Albero alto circa 5 metri, foglie ovali, corteccia grigia, frutti piccoli rossi in autunno.');
+    await page.click('#descGo');
+    await page.waitForSelector('text=Corbezzolo');
+  });
+  await step('diagnosi', async () => {
+    await page.goto(BASE + '#/diagnosi');
+    await page.selectOption('#dPlant', { label: 'Fico vicino al cancello' });
+    await page.waitForSelector('#dGuide details');
+    await page.check('input[name=sym][value="foglie macchiate"]');
+    await page.fill('#dDesc', 'Pustole arancioni sotto le foglie da settembre');
+    await page.click('#dGo');
+    await page.waitForSelector('text=Ruggine del fico', { timeout: 15000 });
+    await page.click('#dSave'); await page.click('#dTask');
+    await shot('08-diagnosi');
+  });
+  await step('progettazione', async () => {
+    await page.goto(BASE + '#/progetta');
+    await page.click('#dNew');
+    await page.click('[data-ok]');
+    await page.waitForSelector('#plan');
+    await page.click('[data-tool=zone]');
+    const box = await page.locator('#plan').boundingBox();
+    await page.mouse.move(box.x + 60, box.y + 60); await page.mouse.down(); await page.mouse.move(box.x + 300, box.y + 200, { steps: 5 }); await page.mouse.up();
+    await page.selectOption('#pSun', 'ombra');
+    await page.click('[data-tool=plant]');
+    await page.fill('#spq', 'pesco');
+    await page.mouse.click(box.x + 150, box.y + 120);
+    await page.mouse.click(box.x + 170, box.y + 125);
+    await page.click('#importPlants');
+    await page.waitForTimeout(300);
+    const warn = await page.textContent('#checksBox');
+    if (!/si sovrapporranno/.test(warn) || !/pieno sole/.test(warn)) throw new Error('verifiche mancanti: ' + warn.slice(0, 200));
+    await page.click('#aiGo');
+    await page.waitForSelector('text=Bordura per impollinatori', { timeout: 15000 });
+    await shot('09-progettazione');
+    await page.click('#dDup');
+    await page.click('#dCmp');
+    await page.waitForSelector('#cOut table');
+    await page.screenshot({ path: OUT + '/10-confronto.png' });
+    await page.keyboard.press('Escape');
+  });
+  await step('orto', async () => {
+    await page.goto(BASE + '#/orto');
+    await page.click('#bedNew'); await page.click('[data-save]');
+    await page.click('[data-plant]');
+    await page.selectOption('#pCrop', 'solanum-lycopersicum');
+    await page.fill('#pYear', String(new Date().getFullYear() - 1));
+    await page.click('[data-save]');
+    await page.waitForTimeout(300);
+    await page.click('[data-plant]');
+    await page.selectOption('#pCrop', 'solanum-tuberosum');
+    const chk = await page.textContent('#pChecks');
+    if (!/Rotazione/.test(chk)) throw new Error('controllo rotazione assente: ' + chk);
+    await page.click('[data-save]');
+    await page.waitForTimeout(300);
+    await page.click('#aiPlan'); await page.waitForSelector('text=Piano rotazioni');
+    await shot('11-orto');
+  });
+  await step('prato', async () => {
+    await page.goto(BASE + '#/prato');
+    await page.selectOption('#q1', 'giallo'); await page.selectOption('#q2', 'fini'); await page.selectOption('#q4', 'si');
+    await page.click('#lGuess');
+    await page.waitForSelector('text=Probabile');
+    await page.selectOption('#lType', 'prato-festuca');
+    await page.fill('#lArea', '250');
+    await page.click('#lSave');
+    await page.waitForSelector('#cutNow');
+    await page.click('#cutNow');
+    await page.waitForSelector('text=Registro tagli');
+    await shot('12-prato');
+  });
+  await step('consulente (streaming)', async () => {
+    await page.goto(BASE + '#/consulente');
+    await page.click('#sugg button');
+    await page.waitForSelector('.msg.assistant b', { timeout: 15000 });
+    await shot('13-consulente');
+  });
+  await step('backup export', async () => {
+    await page.goto(BASE + '#/impostazioni');
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#bExp')]);
+    const j = JSON.parse(fs.readFileSync(await dl.path(), 'utf8'));
+    if (!j.data.plants.length || JSON.stringify(j).includes('sk-ant-test')) throw new Error('backup errato');
+    console.log('   backup: piante', j.data.plants.length, 'attività', j.data.tasks.length, 'foto', j.data.photos.length);
+  });
+  await step('tema scuro + mobile', async () => {
+    await page.goto(BASE + '#/impostazioni');
+    await page.selectOption('#sTheme', 'dark'); await page.click('#sSaveLook');
+    await page.goto(BASE + '#/dashboard'); await page.waitForSelector('#tipCard .tip-text');
+    await shot('14-dashboard-scuro');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload(); await page.waitForSelector('#tipCard .tip-text');
+    const sw = await page.evaluate(() => document.documentElement.scrollWidth);
+    if (sw > 390) throw new Error('scroll orizzontale su mobile: ' + sw);
+    await page.screenshot({ path: OUT + '/15-mobile.png' });
+    await page.goto(BASE + '#/piante'); await page.waitForTimeout(400);
+    const sw2 = await page.evaluate(() => document.documentElement.scrollWidth);
+    if (sw2 > 390) throw new Error('scroll orizzontale archivio: ' + sw2);
+    await page.screenshot({ path: OUT + '/16-mobile-piante.png' });
+  });
+  await step('offline', async () => {
+    await page.goto(BASE + '#/giardino');
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.waitForTimeout(800);
+    await context.setOffline(true);
+    await page.reload();
+    await page.waitForSelector('.pcard', { timeout: 10000 });
+    await context.setOffline(false);
+  });
+
+  // Verifica delle richieste all'API Claude
+  const r0 = log[0];
+  console.log('\nRichieste AI:', log.length, '| modello:', r0?.body.model, '| beta:', r0?.headers['anthropic-beta'], '| fallbacks:', r0?.body.fallbacks, '| effort:', r0?.body.output_config?.effort);
+  console.log('Header browser:', r0?.headers['anthropic-dangerous-direct-browser-access'], '| immagini nel riconoscimento:', log.find(l => JSON.stringify(l.body).includes('"type":"image"')) ? 'sì' : 'no');
+  console.log('\nErrori JS:', errors.length ? errors : 'nessuno');
+  await browser.close();
+})();
