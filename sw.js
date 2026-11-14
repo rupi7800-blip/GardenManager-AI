@@ -1,5 +1,5 @@
 // Service worker: app installabile e consultabile offline, notifiche in background.
-const VERSION = 'gm-v5';
+const VERSION = 'gm-v6';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/ai-providers.js', 'js/db.js', 'js/ui.js', 'js/store.js', 'js/weather.js', 'js/ai.js', 'js/botany.js', 'js/tasks.js', 'js/irrigation.js', 'js/tips.js', 'js/notify.js', 'js/data/species.js',
@@ -9,20 +9,28 @@ const SHELL = [
 ];
 const LAZY = ['vendor/anthropic-sdk.js'];
 
+// 'reload' ignora la cache HTTP del browser (GitHub Pages la tiene 10 minuti): si salvano sempre i file nuovi
+const fresh = (list) => list.map(u => new Request(u, { cache: 'reload' }));
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => caches.open(VERSION)).then(c => c.addAll(LAZY).catch(() => {})).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(fresh(SHELL)).then(() => c.addAll(fresh(LAZY)).catch(() => {}))).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
-// Stale-while-revalidate per i file dell'app; le API esterne passano direttamente in rete
+// Prima la rete (così ogni aggiornamento si vede subito), la copia salvata solo se offline
+// o se la rete non risponde entro 4 secondi; le API esterne passano direttamente in rete
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(caches.open(VERSION).then(async cache => {
-    const hit = await cache.match(e.request, { ignoreSearch: true });
-    const net = fetch(e.request).then(r => { if (r.ok) cache.put(e.request, r.clone()); return r; }).catch(() => hit || (e.request.mode === 'navigate' ? cache.match('index.html') : Response.error()));
-    return hit || net;
+    const fallback = async () => (await cache.match(e.request, { ignoreSearch: true })) || (e.request.mode === 'navigate' ? cache.match('index.html') : Response.error());
+    const net = fetch(e.request, { cache: 'no-cache' }).then(r => { if (r.ok) cache.put(e.request, r.clone()); return r; });
+    const slow = new Promise(res => setTimeout(() => res('slow'), 4000));
+    try {
+      const r = await Promise.race([net, slow]);
+      if (r !== 'slow') return r;
+      return (await cache.match(e.request, { ignoreSearch: true })) || net;
+    } catch (err) { return fallback(); }
   }));
 });
 
