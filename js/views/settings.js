@@ -115,8 +115,8 @@ async function renderAI(box) {
       <div class="field"><label for="aiPrimary">Servizio principale</label><select id="aiPrimary">${options(PROVIDER_ORDER.map(id => [id, `${PROVIDERS[id].label} — ${PROVIDERS[id].free}`]), cfg.primary)}</select></div>
       <div class="field"><label>Servizi di riserva</label><label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" id="aiFallback" ${cfg.fallback ? 'checked' : ''}> Se finisce la quota gratuita o il servizio non risponde, usa automaticamente gli altri servizi attivi</label></div>
     </div>
-    <div class="stack" id="provList">${PROVIDER_ORDER.map(id => { const p = PROVIDERS[id], c = cfg.providers[id]; const showBase = id === 'custom' || id === 'ollama'; return `<details class="card" style="box-shadow:none;padding:10px 14px" data-prov="${id}" ${c.enabled || id === cfg.primary ? 'open' : ''}>
-      <summary style="cursor:pointer"><b>${esc(p.label)}</b> ${chip(p.free)} ${c.enabled ? '<span class="chip sage">attivo</span>' : ''} <small>${p.vision ? '📷 foto' : 'solo testo'}${p.webSearch ? ' · 🔎 fonti web' : ''}</small></summary>
+    <div class="stack" id="provList">${PROVIDER_ORDER.map(id => { const p = PROVIDERS[id], c = cfg.providers[id]; const showBase = id === 'custom' || id === 'ollama'; return `<details class="card" style="box-shadow:none;padding:10px 14px" data-prov="${id}">
+      <summary style="cursor:pointer"><b>${esc(p.label)}</b> ${chip(p.free)} ${id === cfg.primary ? '<span class="chip ok">principale</span>' : ''} ${c.enabled ? '<span class="chip sage">attivo</span>' : ''} <small>${p.vision ? '📷 foto' : 'solo testo'}${p.webSearch ? ' · 🔎 fonti web' : ''}</small></summary>
       <p style="margin-top:8px"><small>${esc(p.note)}${p.keyUrl ? ` <a href="${p.keyUrl}" target="_blank" rel="noopener">${p.needsKey ? 'Ottieni la chiave ↗' : 'Sito ↗'}</a>` : ''}</small></p>
       <label style="font-weight:400;display:flex;gap:8px;align-items:center"><input type="checkbox" data-f="enabled" ${c.enabled ? 'checked' : ''}> Usa questo servizio</label>
       <div class="form-grid" style="margin-top:8px">

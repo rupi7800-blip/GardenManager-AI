@@ -1,5 +1,5 @@
 // Service worker: app installabile e consultabile offline, notifiche in background.
-const VERSION = 'gm-v6';
+const VERSION = 'gm-v7';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/ai-providers.js', 'js/db.js', 'js/ui.js', 'js/store.js', 'js/weather.js', 'js/ai.js', 'js/botany.js', 'js/tasks.js', 'js/irrigation.js', 'js/tips.js', 'js/notify.js', 'js/data/species.js',

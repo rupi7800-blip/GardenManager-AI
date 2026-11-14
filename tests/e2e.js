@@ -37,18 +37,24 @@ const BASE = '' + (process.env.BASE || 'http://localhost:8765') + '/index.html';
   await step('impostazioni chiave AI', async () => {
     await page.goto(BASE + '#/impostazioni');
     await page.waitForSelector('[data-prov=gemini]');
+    // le schede dei servizi sono chiuse all'apertura della pagina
+    if (await page.locator('#provList details[open]').count()) throw new Error('schede aperte di default');
+    await page.click('[data-prov=gemini] summary');
     await page.fill('[data-prov=gemini] [data-f=key]', 'AIza-test-gemini');
     await page.check('[data-prov=gemini] [data-f=enabled]');
     await page.click('[data-prov=groq] summary');
     await page.check('[data-prov=groq] [data-f=enabled]');
     await page.fill('[data-prov=groq] [data-f=key]', 'gsk-test-groq');
     await page.click('#aiSave');
-    await page.waitForSelector('#aiCard .chip.ok');
+    await page.waitForSelector('#aiCard .card-head .chip.ok');
+    if (await page.locator('#provList details[open]').count()) throw new Error('schede aperte dopo il salvataggio');
+    await page.click('[data-prov=gemini] summary');
     await page.click('[data-test=gemini]');
     await page.waitForSelector('[data-out=gemini] .chip.ok');
     await page.click('[data-models=gemini]');
     await page.waitForSelector('[data-out=gemini] .chip.ok');
     // il menu dei modelli è una vera tendina e permette anche di scrivere un modello
+    await page.click('[data-prov=groq] summary');
     await page.selectOption('[data-prov=groq] [data-pick=model]', 'qwen/qwen3-32b');
     if (await page.inputValue('[data-prov=groq] [data-f=model]') !== 'qwen/qwen3-32b') throw new Error('scelta modello non applicata');
     await page.selectOption('[data-prov=groq] [data-pick=model]', '__altro');
